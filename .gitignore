@@ -27,3 +27,9 @@ xcuserdata/
 # Local application data (keep synthetic fixtures elsewhere)
 local-data/
 local-backups/
+
+# Frontend dependencies, builds, and local verification
+node_modules/
+dist/
+out/
+artifacts/
