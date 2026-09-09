@@ -1,4 +1,20 @@
-import type { Attachment, Citation, Entry, Notebook, Scheme, SectionId } from './types';
+import type { Attachment, Citation, Entry, EntryStatus, Notebook, Scheme, SectionId } from './types';
+
+export const statusOptions: { id: EntryStatus; name: string; description: string }[] = [
+  { id: 'todo', name: 'To-Do', description: 'Good questions. Next steps.' },
+  { id: 'progress', name: 'In Progress', description: 'A little discovery in the making.' },
+  { id: 'complete', name: 'Complete', description: 'Recorded, reviewed, and wrapped up.' },
+];
+
+export const initialStatuses: Record<string, EntryStatus> = {
+  'cat-12-2': 'progress',
+  'cat-12-1': 'complete',
+  'cat-11-1': 'todo',
+  'cat-2-1': 'complete',
+  'mat-3-2': 'progress',
+  'mat-3-1': 'complete',
+  'ana-10-1': 'todo',
+};
 
 export const sections: { id: SectionId; name: string; short: string }[] = [
   { id: 'information', name: 'Experimental information', short: 'Information' },

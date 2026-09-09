@@ -1,11 +1,17 @@
-import { useRef, useState } from 'react';
-import { ArrowDownUp, ArrowLeft, ArrowRight, BookOpen, CalendarDays, ChevronDown, ChevronRight, FileText, FlaskConical, FolderOpen, GitBranch, GripVertical, Grid2X2, LayoutList, Library, List, Plus, Quote, Repeat2, Search, Settings, Upload, UserRound } from 'lucide-react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { ArrowDownUp, ArrowLeft, ArrowRight, BookOpen, CalendarDays, ChevronDown, ChevronRight, Columns3, FileText, FlaskConical, FolderOpen, GitBranch, GripVertical, Grid2X2, LayoutList, Library, List, Plus, Quote, Repeat2, Search, Settings, SlidersHorizontal, Upload, UserRound } from 'lucide-react';
 import { CitationChips, EditorToolbar, EntrySections, Planned, SectionNavigation } from './components';
-import { entries, entryCode, formatDate, notebooks, schemes, sortOptions } from './fixtures';
+import { entries, entryCode, formatDate, initialStatuses, notebooks, schemes, sortOptions } from './fixtures';
 import { Panels } from './panels';
-import type { Entry, EntryLayout, Notebook, Panel, SectionId } from './types';
+import Tracker from './Tracker';
+import { applyAppearance } from './appearance';
+import type { Entry, EntryLayout, EntryStatus, Notebook, Panel, SectionId } from './types';
 
 export default function App() {
+  const [page, setPage] = useState<'notebooks' | 'tracker'>('notebooks');
+  const [appearance, setAppearance] = useState(0);
+  const [statuses, setStatuses] = useState<Record<string, EntryStatus>>({ ...initialStatuses });
+  useLayoutEffect(() => { applyAppearance(appearance); }, [appearance]);
   const [notebookId, setNotebookId] = useState<string | null>(null);
   const [entryId, setEntryId] = useState(entries[0].id);
   const [schemeId, setSchemeId] = useState<string | null>(null);
@@ -22,6 +28,7 @@ export default function App() {
   const visibleEntries = scheme ? scheme.entryIds.map(id => entries.find(item => item.id === id)!) : entries.filter(item => item.notebookId === notebookId);
 
   function openNotebook(id: string, selectedEntryId?: string) {
+    setPage('notebooks');
     setNotebookId(id);
     setEntryId(selectedEntryId ?? entries.find(item => item.notebookId === id)!.id);
     setSchemeId(null);
@@ -35,6 +42,7 @@ export default function App() {
     contentPane.current?.scrollTo({ top: 0 });
   }
   function openScheme(id: string) {
+    setPage('notebooks');
     const selected = schemes.find(item => item.id === id)!;
     setSchemeId(id);
     setSort('scheme');
@@ -48,31 +56,33 @@ export default function App() {
       target?.focus({ preventScroll: true });
     }
   }
+  function openDirectory() { setPage('notebooks'); setNotebookId(null); }
 
   return <div className="app-shell">
-    <header className="window-bar"><div className="window-left" /><span className="window-title">Custom ELB</span><span className="preview-indicator"><i />Frontend preview</span></header>
+    <header className="window-bar"><div className="window-left" /><span className="window-title">LabMate</span><span className="preview-indicator"><i />Frontend preview</span></header>
     <div className="app-body">
       <aside className="sidebar" aria-label="Main navigation">
-        <button className="brand" onClick={() => setNotebookId(null)} aria-label="Custom ELB home"><span className="brand-icon"><BookOpen size={23} strokeWidth={1.65} /></span><span>Custom ELB<small>Electronic lab notebook</small></span></button>
+        <button className="brand" onClick={openDirectory} aria-label="LabMate home"><span className="brand-icon"><BookOpen size={23} strokeWidth={1.65} /></span><span>LabMate<small>Electronic lab notebook</small></span></button>
         <div className="sidebar-section">
           <span className="sidebar-label">Workspace</span>
-          <button className={`nav-item ${!notebook ? 'selected' : ''}`} onClick={() => setNotebookId(null)}><Library size={18} /><span>All notebooks</span><span className="nav-count">{notebooks.length}</span></button>
+          <button className={`nav-item ${page === 'notebooks' && !notebook ? 'selected' : ''}`} onClick={openDirectory}><Library size={18} /><span>All notebooks</span><span className="nav-count">{notebooks.length}</span></button>
           <button className="nav-item" onClick={() => setPanel({ kind: 'citations' })}><Quote size={18} /><span>Citation library</span></button>
         </div>
+        <div className="sidebar-section organization-nav"><span className="sidebar-label">Organization</span><button className={`nav-item ${page === 'tracker' ? 'selected' : ''}`} onClick={() => setPage('tracker')} aria-current={page === 'tracker' ? 'page' : undefined}><Columns3 size={18} /><span>Experiment tracker</span></button></div>
         <div className="sidebar-section notebook-nav"><div className="sidebar-section-heading"><span className="sidebar-label">Notebooks</span><button className="icon-button" aria-label="New notebook" onClick={() => setPanel({ kind: 'new-notebook' })}><Plus size={16} /></button></div>
-          {notebooks.map(item => <button key={item.id} className={`nav-item ${item.id === notebookId ? 'selected' : ''}`} onClick={() => openNotebook(item.id)}><span className={`notebook-dot ${item.color}`} /><span>{item.name}</span></button>)}
+          {notebooks.map(item => <button key={item.id} className={`nav-item ${page === 'notebooks' && item.id === notebookId ? 'selected' : ''}`} onClick={() => openNotebook(item.id)}><span className={`notebook-dot ${item.color}`} /><span>{item.name}</span></button>)}
         </div>
-        {notebook && <div className="sidebar-section scheme-nav"><div className="sidebar-section-heading"><span className="sidebar-label">Schemes</span><button className="icon-button" disabled title="Create scheme — planned" aria-label="Create scheme — planned"><Plus size={16} /></button></div>
+        {page === 'notebooks' && notebook && <div className="sidebar-section scheme-nav"><div className="sidebar-section-heading"><span className="sidebar-label">Schemes</span><button className="icon-button" disabled title="Create scheme — planned" aria-label="Create scheme — planned"><Plus size={16} /></button></div>
           {notebookSchemes.map(item => <button className={`nav-item ${item.id === schemeId ? 'selected' : ''}`} key={item.id} onClick={() => openScheme(item.id)}><GitBranch size={16} /><span>{item.name}</span></button>)}
           <p className="sidebar-hint">Your experiments, in your order.</p>
         </div>}
-        <div className="sidebar-bottom"><button className="nav-item" onClick={() => setPanel({ kind: 'settings' })}><Settings size={18} /><span>Settings</span></button><div className="preview-note"><span className="preview-dot" /><div><strong>A first look</strong><span>Fictional content. Nothing is saved.</span></div></div></div>
+        <div className="sidebar-bottom"><div className="settings-row"><button className="nav-item" onClick={() => setPanel({ kind: 'settings' })}><Settings size={18} /><span>Settings</span></button><button className="appearance-shortcut icon-button" onClick={() => setPanel({ kind: 'settings' })} aria-label="Adjust appearance" title="Adjust appearance"><SlidersHorizontal size={17} /></button></div><div className="preview-note"><span className="preview-dot" /><div><strong>A first look</strong><span>Fictional content. Nothing is saved.</span></div></div></div>
       </aside>
 
-      {!notebook ? <main className="directory-main">
+      {page === 'tracker' ? <Tracker statuses={statuses} onStatusChange={(id, status) => setStatuses(current => ({ ...current, [id]: status }))} onOpenEntry={openNotebook} /> : !notebook ? <main className="directory-main">
         <div className="breadcrumb-bar"><span><FolderOpen size={15} />Workspace<span className="breadcrumb-slash">/</span><strong>All notebooks</strong></span><span className="quiet-label">Personal workspace</span></div>
         <div className="directory-content">
-          <div className="page-heading"><div><span className="eyebrow">Your workspace</span><h1>Lab notebooks</h1><p>A home for your experiments, observations, and discoveries.</p></div><button className="button button-primary" onClick={() => setPanel({ kind: 'new-notebook' })}><Plus size={17} />New notebook</button></div>
+          <div className="page-heading"><div><span className="eyebrow">A place for your curiosity</span><h1>Lab notebooks<span className="heading-spark" aria-hidden="true">✦</span></h1><p>A home for your experiments, observations, and discoveries.</p></div><button className="button button-primary" onClick={() => setPanel({ kind: 'new-notebook' })}><Plus size={17} />New notebook</button></div>
           <div className="directory-controls"><div className="underlined-label">All notebooks <span>{notebooks.length}</span></div><div className="view-toggle" aria-label="Notebook view"><button aria-label="Grid view" aria-pressed={directoryView === 'grid'} className={directoryView === 'grid' ? 'selected' : ''} onClick={() => setDirectoryView('grid')}><Grid2X2 size={16} /></button><button aria-label="List view" aria-pressed={directoryView === 'list'} className={directoryView === 'list' ? 'selected' : ''} onClick={() => setDirectoryView('list')}><List size={17} /></button></div></div>
           <div className={`notebook-cards ${directoryView}`}>{notebooks.map((item, index) => <NotebookCard notebook={item} index={index} key={item.id} onOpen={() => openNotebook(item.id)} />)}</div>
           <div className="recent-heading"><h2>Recent entries</h2><span>The latest pages across your notebooks</span></div>
@@ -109,7 +119,7 @@ export default function App() {
         </div>
       </main>}
     </div>
-    {panel && <Panels panel={panel} key={panel.kind} onClose={() => setPanel(null)} layout={layout} setLayout={setLayout} notebook={notebook} entry={entry} />}
+    {panel && <Panels panel={panel} key={panel.kind} onClose={() => setPanel(null)} layout={layout} setLayout={setLayout} appearance={appearance} setAppearance={setAppearance} notebook={notebook} entry={entry} />}
   </div>;
 }
 

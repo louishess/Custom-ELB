@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { ArrowDown, ArrowRight, ArrowUp, BookOpen, Check, ChevronRight, Cloud, FileText, LayoutList, Link, List, Monitor, Quote, Search, Settings2 } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, BookOpen, Check, ChevronRight, Cloud, FileText, LayoutList, Link, List, Monitor, Moon, Quote, Search, Settings2, Sun } from 'lucide-react';
 import { AttachmentIcon, Modal, Planned } from './components';
 import { citations, entries, entryCode, schemes, sections, sortOptions } from './fixtures';
 import type { Attachment, Entry, EntryLayout, Notebook, Panel, SectionId } from './types';
 
-export function Panels({ panel, onClose, layout, setLayout, notebook, entry }: { panel: Panel; onClose: () => void; layout: EntryLayout; setLayout: (layout: EntryLayout) => void; notebook?: Notebook; entry?: Entry }) {
+export function Panels({ panel, onClose, layout, setLayout, appearance, setAppearance, notebook, entry }: { panel: Panel; onClose: () => void; layout: EntryLayout; setLayout: (layout: EntryLayout) => void; appearance: number; setAppearance: (appearance: number) => void; notebook?: Notebook; entry?: Entry }) {
   if (panel.kind === 'settings') return <Modal title="Settings" eyebrow="Make room for your work" onClose={onClose}>
-    <div className="modal-body"><div className="settings-heading"><Monitor size={19} /><div><h3>Entry layout</h3><p>Choose how you move through an experiment.</p></div></div>
+    <div className="modal-body"><div className="settings-heading"><Sun size={19} /><div><h3>Appearance</h3><p>A brighter desk or a quieter evening.</p></div></div>
+      <div className="appearance-control"><div className="appearance-control-heading"><label htmlFor="appearance-range">Find your balance</label><output htmlFor="appearance-range">{appearance}%</output></div><input id="appearance-range" type="range" min="0" max="100" step="1" value={appearance} aria-label="Appearance" aria-valuetext={appearance === 0 ? 'Light, 0 percent' : appearance === 100 ? 'Dark, 100 percent' : `${appearance} percent toward dark`} onChange={event => setAppearance(Number(event.target.value))} /><div className="appearance-endpoints"><span><Sun size={16} />Light <small>Warm & open</small></span><span><Moon size={16} />Dark <small>Quiet & soft</small></span></div><p>Slide to any point between light and dark. Your workspace updates as you go.</p></div>
+      <div className="settings-heading layout-settings-heading"><Monitor size={19} /><div><h3>Entry layout</h3><p>Choose how you move through an experiment.</p></div></div>
       <fieldset className="layout-options"><legend className="sr-only">Entry layout</legend>
         {(['continuous', 'tabs'] as const).map(option => <label className={`layout-option ${layout === option ? 'selected' : ''}`} key={option}>
           <input type="radio" name="layout" value={option} checked={layout === option} onChange={() => setLayout(option)} />
@@ -15,8 +17,8 @@ export function Panels({ panel, onClose, layout, setLayout, notebook, entry }: {
           <span className="layout-option-description">{option === 'continuous' ? 'Read the full entry with section jump links.' : 'Focus on one section at a time.'}</span>
         </label>)}
       </fieldset><p className="muted-note">Applies to every notebook during this session. Settings reset when the app closes.</p>
-      <div className="settings-about"><BookOpen size={19} /><div><strong>Custom ELB</strong><p>Frontend skeleton · 0.1.0</p></div><span className="soft-badge">Mac preview</span></div>
-    </div><div className="modal-footer"><span>Layout changes apply immediately.</span><button className="button button-primary" onClick={onClose}>Done</button></div>
+      <div className="settings-about"><BookOpen size={19} /><div><strong>LabMate</strong><p>Frontend skeleton · 0.2.0</p></div><span className="soft-badge">Mac preview</span></div>
+    </div><div className="modal-footer"><span>Appearance and layout apply immediately.</span><button className="button button-primary" onClick={onClose}>Done</button></div>
   </Modal>;
   if (panel.kind === 'export') return <ExportPanel initialScope={panel.scope} notebook={notebook!} entry={entry!} onClose={onClose} />;
   if (panel.kind === 'attachment') return <AttachmentPanel attachment={panel.attachment} onClose={onClose} />;

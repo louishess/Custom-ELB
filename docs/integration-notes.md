@@ -26,7 +26,7 @@ route; it does not establish compatibility with an installed/running build.
   the API is enabled and discover capabilities from the actual running client.
 - Associate a reference using source-instance, library, and item identifiers,
   accompanied by a bibliographic snapshot. Do not key associations by title.
-- A companion plugin could add “Send to Custom ELB” inside Zotero. Build that only
+- A companion plugin could add “Send to LabMate” inside Zotero. Build that only
   when the notebook has a real association interface and the push workflow is
   needed. A plugin need not be a prerequisite for the notebook-side picker.
 - Put future local API access behind a narrow desktop-process interface rather

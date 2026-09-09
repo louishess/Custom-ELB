@@ -12,8 +12,8 @@ function createWindow() {
     height: 960,
     minWidth: 1000,
     minHeight: 700,
-    title: 'Custom ELB',
-    backgroundColor: '#f8f9f7',
+    title: 'LabMate',
+    backgroundColor: '#f9f1df',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 20, y: 20 },
     webPreferences: {
@@ -49,7 +49,7 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(filePath).toString());
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'Custom ELB', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'LabMate', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { role: 'editMenu' },
     { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { role: 'windowMenu' },

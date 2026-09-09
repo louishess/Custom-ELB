@@ -1,15 +1,15 @@
 import { packager } from '@electron/packager';
 import { execFileSync } from 'node:child_process';
 
-execFileSync('swift', ['scripts/icon.swift', 'artifacts/CustomELB.iconset'], { stdio: 'inherit' });
-execFileSync('iconutil', ['-c', 'icns', 'artifacts/CustomELB.iconset', '-o', 'artifacts/CustomELB.icns'], { stdio: 'inherit' });
+execFileSync('swift', ['scripts/icon.swift', 'artifacts/LabMate.iconset'], { stdio: 'inherit' });
+execFileSync('iconutil', ['-c', 'icns', 'artifacts/LabMate.iconset', '-o', 'artifacts/LabMate.icns'], { stdio: 'inherit' });
 
 const paths = await packager({
   dir: '.',
-  name: 'Custom ELB',
-  executableName: 'Custom ELB',
-  appBundleId: 'com.louishess.custom-elb',
-  icon: 'artifacts/CustomELB.icns',
+  name: 'LabMate',
+  executableName: 'LabMate',
+  appBundleId: 'com.louishess.labmate',
+  icon: 'artifacts/LabMate.icns',
   platform: 'darwin',
   arch: 'arm64',
   out: 'out',
@@ -23,4 +23,4 @@ const paths = await packager({
     await rm(`${buildPath}/node_modules`, { recursive: true, force: true });
   }],
 });
-for (const outputPath of paths) console.log(`${outputPath}/Custom ELB.app`);
+for (const outputPath of paths) console.log(`${outputPath}/LabMate.app`);

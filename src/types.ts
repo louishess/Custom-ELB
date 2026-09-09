@@ -1,5 +1,6 @@
 export type SectionId = 'information' | 'method' | 'notes' | 'data';
 export type EntryLayout = 'continuous' | 'tabs';
+export type EntryStatus = 'todo' | 'progress' | 'complete';
 export type AttachmentKind = 'image' | 'pdf' | 'spreadsheet' | 'scientific';
 
 export interface Attachment {

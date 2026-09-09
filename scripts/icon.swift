@@ -38,6 +38,16 @@ let crease = NSBezierPath()
 crease.move(to: NSPoint(x: 529, y: 660)); crease.line(to: NSPoint(x: 529, y: 522)); crease.lineWidth = 8; crease.stroke()
 let line = NSBezierPath(roundedRect: NSRect(x: 447, y: 398, width: 165, height: 6), xRadius: 3, yRadius: 3)
 NSColor(red: 0.68, green: 0.79, blue: 0.60, alpha: 1).setFill(); line.fill()
+// A small apricot sparkle carries the LabMate identity into the Dock.
+let sparkle = NSBezierPath()
+sparkle.move(to: NSPoint(x: 756, y: 869))
+sparkle.curve(to: NSPoint(x: 816, y: 809), controlPoint1: NSPoint(x: 764, y: 827), controlPoint2: NSPoint(x: 774, y: 817))
+sparkle.curve(to: NSPoint(x: 756, y: 749), controlPoint1: NSPoint(x: 774, y: 801), controlPoint2: NSPoint(x: 764, y: 791))
+sparkle.curve(to: NSPoint(x: 696, y: 809), controlPoint1: NSPoint(x: 748, y: 791), controlPoint2: NSPoint(x: 738, y: 801))
+sparkle.curve(to: NSPoint(x: 756, y: 869), controlPoint1: NSPoint(x: 738, y: 817), controlPoint2: NSPoint(x: 748, y: 827))
+sparkle.close()
+NSColor(red: 0.93, green: 0.68, blue: 0.40, alpha: 1).setFill()
+sparkle.fill()
 image.unlockFocus()
 for size in [16, 32, 128, 256, 512] {
   for scale in [1, 2] {

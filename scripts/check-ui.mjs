@@ -5,8 +5,8 @@ import { _electron as electron } from 'playwright';
 
 const output = path.resolve('artifacts/ui');
 await mkdir(output, { recursive: true });
-const application = await electron.launch(process.env.ELB_APP_BINARY
-  ? { executablePath: process.env.ELB_APP_BINARY, args: [] }
+const application = await electron.launch(process.env.LABMATE_APP_BINARY
+  ? { executablePath: process.env.LABMATE_APP_BINARY, args: [] }
   : { args: ['.'] });
 const page = await application.firstWindow();
 const failures = [];
@@ -19,8 +19,20 @@ async function visible(locator) { await locator.waitFor({ state: 'visible' }); }
 async function closePanel() { await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'detached' }); }
 async function screenshot(name) { await page.screenshot({ path: path.join(output, `${name}.png`) }); }
 
+async function setAppearance(value) {
+  await page.getByRole('button', { name: 'Adjust appearance', exact: true }).click();
+  await page.getByRole('slider', { name: 'Appearance', exact: true }).evaluate((input, next) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(next));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+  assert.equal(await page.locator('html').getAttribute('data-appearance'), String(value));
+  await closePanel();
+}
+
+
 try {
   await check('Directory renders with three notebooks', async () => {
+    assert.equal(await page.title(), 'LabMate');
     await visible(page.getByRole('heading', { name: 'Lab notebooks', exact: true }));
     assert.equal(await page.locator('.notebook-card').count(), 3);
     await screenshot('01-directory');
@@ -164,6 +176,72 @@ try {
     await screenshot('12-small-directory');
     assert.equal(await page.evaluate(() => document.querySelector('.directory-content').scrollWidth > document.querySelector('.directory-content').clientWidth + 1), false);
   });
+  await check('Appearance continuum across pages and dialogs', async () => {
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('slider', { name: 'Appearance', exact: true }).focus();
+    await page.keyboard.press('End');
+    assert.equal(await page.locator('html').getAttribute('data-appearance'), '100');
+    assert.equal(await page.getByRole('dialog').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(40, 53, 49)');
+    await screenshot('13-dark-settings');
+    await closePanel();
+    await screenshot('14-dark-directory');
+
+    const colors = [];
+    for (const amount of [0, 25, 50, 75, 100]) {
+      await setAppearance(amount);
+      colors.push(await page.locator('html').evaluate(element => getComputedStyle(element).getPropertyValue('--canvas')));
+      await screenshot(`appearance-${amount}`);
+    }
+    assert.equal(new Set(colors).size, 5);
+    await page.getByRole('button', { name: 'Adjust appearance', exact: true }).click();
+    await page.getByRole('slider', { name: 'Appearance', exact: true }).focus();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator('html').getAttribute('data-appearance'), '1');
+    await page.keyboard.press('End');
+    await closePanel();
+
+    await page.locator('.notebook-card').first().click();
+    assert.equal(await page.locator('html').getAttribute('data-appearance'), '100');
+    await screenshot('15-dark-notebook');
+    await page.getByRole('button', { name: 'Open citation library', exact: true }).click();
+    await screenshot('16-dark-citations');
+    await closePanel();
+    await page.getByRole('button', { name: 'Export entry', exact: true }).click();
+    await screenshot('17-dark-export');
+    await closePanel();
+    await setAppearance(0);
+    assert.equal(await page.locator('html').getAttribute('data-appearance'), '0');
+  });
+  await check('Organization tracker, status changes, filtering, and entry links', async () => {
+    await page.getByRole('button', { name: 'Experiment tracker', exact: true }).click();
+    await visible(page.getByRole('heading', { name: 'Experiment tracker', exact: true }));
+    for (const status of ['To-Do', 'In Progress', 'Complete']) await visible(page.getByRole('heading', { name: status, exact: true }));
+    assert.equal(await page.locator('.tracker-card').count(), 7);
+    assert.equal(await page.locator('.tracker-column.todo .tracker-card').count(), 2);
+    assert.equal(await page.locator('.tracker-column.progress .tracker-card').count(), 2);
+    assert.equal(await page.locator('.tracker-column.complete .tracker-card').count(), 3);
+    await screenshot('18-tracker-light');
+    await page.getByLabel('Status for Solvent comparison', { exact: true }).selectOption('complete');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'status-cat-11-1');
+    assert.equal(await page.locator('.tracker-column.complete .tracker-card').count(), 4);
+    await visible(page.locator('.tracker-summary').getByText('4 of 7 sample experiments complete.', { exact: false }));
+    await setAppearance(100);
+    await screenshot('19-tracker-dark');
+    await page.getByLabel('Filter tracker by notebook', { exact: true }).selectOption('materials');
+    assert.equal(await page.locator('.tracker-card').count(), 2);
+    await visible(page.locator('.tracker-column.todo .tracker-empty'));
+    await page.getByRole('button', { name: 'Polymer film repeat', exact: true }).click();
+    await visible(page.getByRole('heading', { name: 'Polymer film repeat', exact: true }));
+    assert.equal(await page.locator('html').getAttribute('data-appearance'), '100');
+    await page.getByRole('button', { name: 'Experiment tracker', exact: true }).click();
+    assert.equal(await page.getByLabel('Status for Solvent comparison', { exact: true }).inputValue(), 'complete');
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 700));
+    await screenshot('20-tracker-small-dark');
+    const overflows = await page.evaluate(() => [...document.querySelectorAll('.tracker-main, .tracker-content, .tracker-board, .tracker-column')].filter(element => element.scrollWidth > element.clientWidth + 1).map(element => element.className));
+    assert.deepEqual(overflows, []);
+  });
   await check('Sandbox, session-only state, and offline content', async () => {
     const preferences = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
     assert.equal(preferences.nodeIntegration, false);
@@ -174,11 +252,15 @@ try {
     assert.deepEqual(externalRequests, []);
     await page.reload();
     await visible(page.getByRole('heading', { name: 'Lab notebooks', exact: true }));
+    assert.equal(await page.locator('html').getAttribute('data-appearance'), '0');
+    await page.getByRole('button', { name: 'Experiment tracker', exact: true }).click();
+    assert.equal(await page.getByLabel('Status for Solvent comparison', { exact: true }).inputValue(), 'todo');
+    await page.getByRole('button', { name: 'LabMate home', exact: true }).click();
     await page.locator('.notebook-card').first().click();
     assert.equal(await page.getByRole('tablist').count(), 0);
     assert.deepEqual(failures, []);
   });
-  await writeFile(path.join(output, 'checks.json'), JSON.stringify({ checkedAt: new Date().toISOString(), packaged: Boolean(process.env.ELB_APP_BINARY), checks, failures, externalRequests }, null, 2));
+  await writeFile(path.join(output, 'checks.json'), JSON.stringify({ checkedAt: new Date().toISOString(), packaged: Boolean(process.env.LABMATE_APP_BINARY), checks, failures, externalRequests }, null, 2));
   console.log(`Verified ${checks.length} interface checks. Screenshots: ${output}`);
 } catch (error) {
   await screenshot('failure');

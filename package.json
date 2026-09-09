@@ -1,7 +1,7 @@
 {
-  "name": "custom-elb",
-  "productName": "Custom ELB",
-  "version": "0.1.0",
+  "name": "labmate",
+  "productName": "LabMate",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "A Mac-first electronic lab notebook frontend skeleton",
@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "package:mac": "npm run build && node scripts/package.mjs",
-    "check:ui": "node scripts/check-ui.mjs"
+    "check:ui": "node scripts/check-ui.mjs",
+    "check:appearance": "node --experimental-strip-types scripts/check-appearance.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",
