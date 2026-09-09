@@ -1,0 +1,27 @@
+.attachment-preview-content { width: 100%; min-width: 0; }
+.attachment-preview-status { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 210px; padding: 24px; text-align: center; color: var(--ink-secondary); }
+.attachment-preview-status strong { color: var(--ink); font-size: 13px; font-weight: 550; }
+.attachment-preview-status > span { max-width: 440px; font-size: 11px; line-height: 1.65; }
+.attachment-preview-spinner { animation: attachment-preview-spin 1s linear infinite; color: var(--accent-ink); }
+.attachment-preview-progress-text { font-variant-numeric: tabular-nums; }
+.attachment-preview-status progress { width: min(270px, 100%); height: 6px; accent-color: var(--accent-ink); }
+.attachment-preview-unsupported > svg { color: var(--accent-ink); }
+.attachment-preview-image { display: block; max-width: 100%; max-height: 440px; object-fit: contain; border-radius: 3px; user-select: none; }
+.attachment-preview-pdf-wrap { display: flex; flex-direction: column; align-items: center; width: 100%; min-width: 0; gap: 10px; }
+.attachment-preview-pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; color: var(--ink-secondary); font-size: 11px; }
+.attachment-preview-pdf-toolbar .icon-button { width: 28px; height: 28px; padding: 0; }
+.attachment-preview-pdf-toolbar .icon-button:disabled { opacity: .45; cursor: default; }
+.attachment-preview-pdf-canvas-wrap { display: flex; justify-content: center; width: 100%; max-height: 520px; overflow: auto; padding: 2px; background: var(--surface); }
+.attachment-preview-pdf-canvas-wrap canvas { display: block; max-width: 100%; height: auto !important; box-shadow: 0 2px 12px #24332b1c; }
+.attachment-preview-pdf-status { color: var(--ink-secondary); font-size: 10px; }
+.attachment-preview-spreadsheet { width: 100%; min-width: 0; align-self: stretch; }
+.attachment-preview-sheet + .attachment-preview-sheet { margin-top: 20px; }
+.attachment-preview-sheet h4 { margin: 0 0 9px; color: var(--ink); font-size: 11px; font-weight: 600; }
+.attachment-preview-table-wrap { max-width: 100%; max-height: 440px; overflow: auto; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.attachment-preview-table-wrap table { width: max-content; min-width: 100%; border-collapse: collapse; color: var(--ink-secondary); font-size: 11px; }
+.attachment-preview-table-wrap td { max-width: 300px; padding: 7px 9px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+.attachment-preview-table-wrap tr:first-child td { color: var(--ink); font-weight: 550; background: var(--surface-soft); }
+.attachment-preview-table-wrap td:last-child { border-right: 0; }
+.attachment-preview-limit { margin: 10px 0 0; color: var(--ink-secondary); font-size: 10px; line-height: 1.6; }
+@keyframes attachment-preview-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .attachment-preview-spinner { animation: none; } }

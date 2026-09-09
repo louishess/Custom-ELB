@@ -1,271 +1,256 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { _electron as electron } from 'playwright';
 
+const root = await mkdtemp(path.join(os.tmpdir(), 'labmate-ui-'));
 const output = path.resolve('artifacts/ui');
 await mkdir(output, { recursive: true });
-const application = await electron.launch(process.env.LABMATE_APP_BINARY
-  ? { executablePath: process.env.LABMATE_APP_BINARY, args: [] }
-  : { args: ['.'] });
-const page = await application.firstWindow();
-const failures = [];
-const externalRequests = [];
-page.on('pageerror', error => failures.push(error.message));
-page.on('request', request => { if (/^https?:/.test(request.url())) externalRequests.push(request.url()); });
-const checks = [];
-async function check(name, fn) { await fn(); checks.push(name); console.log(`PASS ${name}`); }
-async function visible(locator) { await locator.waitFor({ state: 'visible' }); }
-async function closePanel() { await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'detached' }); }
-async function screenshot(name) { await page.screenshot({ path: path.join(output, `${name}.png`) }); }
-
-async function setAppearance(value) {
-  await page.getByRole('button', { name: 'Adjust appearance', exact: true }).click();
-  await page.getByRole('slider', { name: 'Appearance', exact: true }).evaluate((input, next) => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(next));
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }, value);
-  assert.equal(await page.locator('html').getAttribute('data-appearance'), String(value));
-  await closePanel();
+const checks = [], failures = [], externalRequests = [];
+let application, page;
+async function launch() {
+  application = await electron.launch({
+    ...(process.env.LABMATE_APP_BINARY ? { executablePath: process.env.LABMATE_APP_BINARY, args: [] } : { args: ['.'] }),
+    env: { ...process.env, LABMATE_LIBRARY_ROOT: path.join(root, 'library'), LABMATE_TEST_PROFILE: path.join(root, 'profile') },
+  });
+  page = await application.firstWindow();
+  page.on('pageerror', error => failures.push(error.message));
+  page.on('request', request => { if (/^https?:/.test(request.url())) externalRequests.push(request.url()); });
+  await page.getByRole('heading', { name: 'Lab notebooks', exact: true }).waitFor();
 }
-
-
+async function check(name, operation) { await operation(); checks.push(name); console.log(`PASS ${name}`); }
+async function closePanel() { await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'detached' }); }
+async function snapshot() { const result = await page.evaluate(() => window.labmate.records.snapshot()); assert.equal(result.ok, true); return result.value; }
+async function shot(name) {
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))));
+  const png = await application.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
+  await writeFile(path.join(output, `${name}.png`), Buffer.from(png, 'base64'));
+}
+async function openSettings() { await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByRole('dialog', { name: 'Settings', exact: true }).waitFor(); }
+const editor = label => page.locator(`[contenteditable="true"][aria-label="${label} editor"]`);
+async function fillEditor(label, text) {
+  const target = editor(label);
+  await target.click();
+  await target.press('Meta+A');
+  await page.keyboard.insertText(text);
+  await page.waitForFunction(({ label, text }) => document.querySelector(`[contenteditable="true"][aria-label="${label} editor"]`)?.textContent === text, { label, text });
+}
+let firstId;
 try {
-  await check('Directory renders with three notebooks', async () => {
-    assert.equal(await page.title(), 'LabMate');
-    await visible(page.getByRole('heading', { name: 'Lab notebooks', exact: true }));
-    assert.equal(await page.locator('.notebook-card').count(), 3);
-    await screenshot('01-directory');
-  });
-  await check('Directory view and notebook form', async () => {
-    await page.getByRole('button', { name: 'List view', exact: true }).click();
-    await visible(page.locator('.notebook-cards.list'));
-    await page.getByRole('button', { name: 'Grid view', exact: true }).click();
+  await launch();
+  await check('Real empty library and usable notebook creation form', async () => {
+    assert.equal(await page.locator('.notebook-card').count(), 0);
     await page.getByRole('button', { name: 'New notebook', exact: true }).last().click();
-    await visible(page.getByRole('dialog', { name: 'New notebook', exact: true }));
-    assert.equal(await page.getByRole('button', { name: 'Create notebook Planned' }).isDisabled(), true);
-    await page.getByLabel('Notebook name', { exact: true }).fill('Temporary field value');
-    await screenshot('02-notebook-form');
-    await closePanel();
-    assert.equal(await page.locator('.notebook-card').count(), 3);
+    await page.getByLabel('Notebook name', { exact: true }).fill('UI acceptance notebook');
+    await page.getByLabel('Description', { exact: true }).fill('Disposable native UI test');
+    await shot('01-notebook-form');
+    await page.getByRole('dialog').getByRole('button', { name: 'Create notebook', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    assert.equal((await snapshot()).notebooks.length, 1);
+    await page.getByRole('button', { name: 'List view', exact: true }).click();
+    await page.locator('.notebook-cards.list').waitFor();
+    await page.getByRole('button', { name: 'Grid view', exact: true }).click();
+    await shot('02-directory');
   });
-  await check('Notebook and entry selection', async () => {
+  await check('Create an experiment through native app controls', async () => {
     await page.locator('.notebook-card').first().click();
-    await visible(page.getByRole('heading', { name: 'Catalyst loading study', exact: true }));
-    await screenshot('03-notebook');
-    await page.locator('.entry-list-item').filter({ hasText: 'Catalyst loading baseline' }).click();
-    await visible(page.getByRole('heading', { name: 'Catalyst loading baseline', exact: true }));
-    await page.locator('.entry-list-item').filter({ hasText: 'Catalyst loading study' }).click();
-    assert.equal(await page.getByRole('button', { name: 'Bold — planned', exact: true }).isDisabled(), true);
-    assert.equal(await page.getByRole('textbox', { name: 'Search entries — planned', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: 'New experiment', exact: true }).first().click();
+    await page.getByLabel('Entry title', { exact: true }).fill('UI first run');
+    await page.getByLabel('Experiment label', { exact: true }).fill('UI-test');
+    await page.getByLabel('Author', { exact: true }).fill('UI tester');
+    await page.getByRole('dialog').getByRole('button', { name: 'Create experiment', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    await page.locator('.entry-list-item').first().click();
+    firstId = (await snapshot()).runs[0].id;
+    await editor('Experimental information').waitFor();
   });
-  await check('Sort choices and overlapping scheme navigation', async () => {
-    const sort = page.getByRole('combobox', { name: 'Sort entries', exact: true });
-    for (const value of ['oldest', 'az', 'za', 'number-asc', 'number-desc', 'newest']) {
-      await sort.selectOption(value); assert.equal(await sort.inputValue(), value);
-    }
-    await page.getByRole('button', { name: 'Loading comparison', exact: true }).click();
-    assert.equal(await page.locator('.entry-list-item').count(), 2);
-    await visible(page.getByRole('heading', { name: 'Catalyst loading baseline', exact: true }));
-    await screenshot('04-scheme');
-    await page.getByRole('button', { name: 'Route A · development', exact: true }).click();
-    assert.equal(await page.locator('.entry-list-item').count(), 4);
-    await page.locator('.entry-list-item').filter({ hasText: 'Catalyst loading study' }).click();
-  });
-  await check('New and repeat experiment forms are presentation only', async () => {
-    for (const name of ['New experiment', 'Repeat experiment']) {
-      await page.getByRole('button', { name, exact: true }).click();
-      await visible(page.getByRole('dialog', { name, exact: true }));
-      assert.equal(await page.getByRole('dialog').locator('button[type="submit"], button.button-primary').last().isDisabled(), true);
-      await closePanel();
-    }
-    assert.equal(await page.locator('.entry-list-item').count(), 4);
-  });
-  await check('Settings changes entry layout and restores dialog focus', async () => {
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await screenshot('05-settings');
-    await page.getByRole('radio', { name: /Section tabs/ }).check();
-    await page.getByRole('button', { name: 'Done', exact: true }).click();
-    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Settings');
-    await visible(page.getByRole('tablist', { name: 'Entry sections' }));
-    await page.getByRole('tab', { name: 'Information', exact: true }).focus();
-    await page.keyboard.press('ArrowRight');
-    assert.equal(await page.getByRole('tab', { name: 'Method', exact: true }).getAttribute('aria-selected'), 'true');
-    await page.keyboard.press('End');
-    assert.equal(await page.getByRole('tab', { name: 'Data', exact: true }).getAttribute('aria-selected'), 'true');
-    await page.getByRole('tab', { name: 'Method', exact: true }).click();
-    assert.equal(await page.getByRole('tabpanel').count(), 1);
-    await visible(page.getByRole('heading', { name: 'Procedure', exact: true }));
-    await screenshot('06-method-tabs');
-    await page.getByRole('tab', { name: 'Notes', exact: true }).click();
-    assert.equal(await page.getByRole('button', { name: 'Dictate Planned', exact: true }).isDisabled(), true);
-    await page.getByRole('tab', { name: 'Data', exact: true }).click();
-    await screenshot('07-data-tabs');
-  });
-  await check('All four attachment detail panels', async () => {
-    for (const kind of ['image', 'pdf', 'spreadsheet', 'scientific']) {
-      await page.locator('.attachment-card').filter({ has: page.locator(`.file-icon.${kind}`) }).click();
-      await visible(page.getByRole('dialog', { name: 'Attachment details' }));
-      await visible(page.locator(`.preview-${kind}`));
-      if (kind === 'scientific') await visible(page.getByRole('heading', { name: 'Preview support planned' }));
-      await screenshot(`08-attachment-${kind}`);
-      await closePanel();
-    }
-  });
-  await check('Citation details switch without a connection', async () => {
-    await page.getByRole('button', { name: 'Open citation library', exact: true }).click();
-    await visible(page.getByRole('dialog', { name: 'Citation library' }));
-    assert.equal(await page.getByRole('button', { name: 'Connect Planned' }).isDisabled(), true);
-    await page.locator('.citation-list button').last().click();
-    await visible(page.locator('.citation-details h3').filter({ hasText: 'Calibration strategies' }));
-    await screenshot('09-citations');
-    await closePanel();
-  });
-  await check('Single-entry and batch export options', async () => {
-    await page.getByRole('button', { name: 'Export entry', exact: true }).click();
-    await visible(page.getByRole('dialog', { name: 'Export options' }));
-    assert.equal(await page.getByLabel('Export scope', { exact: true }).inputValue(), 'entry');
-    assert.equal(await page.getByLabel('Entry ordering', { exact: true }).count(), 0);
-    for (const format of ['txt', 'md', 'html', 'rtf', 'docx', 'google']) await page.getByLabel('Format', { exact: true }).selectOption(format);
-    await visible(page.getByText('Google Docs is a future connected destination.', { exact: false }));
-    await page.getByLabel('Export scope', { exact: true }).selectOption('selected');
-    assert.equal(await page.locator('.entry-checkboxes input').count(), 4);
-    await page.getByLabel('Entry ordering', { exact: true }).selectOption('scheme');
-    await visible(page.getByLabel('Scheme', { exact: true }));
-    await page.getByRole('button', { name: 'Move Method up', exact: true }).click();
-    assert.match(await page.locator('.export-section-row').first().innerText(), /Method/);
-    await page.getByLabel('Data inclusion', { exact: true }).selectOption('previews');
-    assert.equal(await page.getByRole('button', { name: 'Export Planned', exact: true }).isDisabled(), true);
-    await screenshot('10-export-options');
-    await closePanel();
-    await page.getByRole('button', { name: 'Export notebook', exact: true }).click();
-    assert.equal(await page.getByLabel('Export scope', { exact: true }).inputValue(), 'notebook');
-    await closePanel();
-    await page.getByRole('button', { name: 'Export selected entries', exact: true }).click();
-    assert.equal(await page.getByLabel('Export scope', { exact: true }).inputValue(), 'selected');
-    await closePanel();
-  });
-  await check('Layout carries across notebooks and empty data is readable', async () => {
-    await page.getByRole('button', { name: 'Functional materials', exact: true }).click();
-    await visible(page.getByRole('heading', { name: 'Polymer film repeat', exact: true }));
-    await visible(page.getByRole('tablist'));
-    await page.getByRole('button', { name: 'Analytical methods', exact: true }).click();
-    await visible(page.getByRole('heading', { name: 'Calibration series', exact: true }));
-    await page.getByRole('button', { name: 'Catalysis & synthesis', exact: true }).click();
-    await page.locator('.entry-list-item').filter({ hasText: 'Initial reaction survey' }).click();
-    await page.getByRole('tab', { name: 'Data', exact: true }).click();
-    await visible(page.getByText('No sample attachments', { exact: true }));
-  });
-  await check('Minimum Mac window size and continuous jump links', async () => {
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 700));
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('radio', { name: /Continuous page/ }).check();
-    await closePanel();
-    await page.locator('.entry-list-item').filter({ hasText: 'Catalyst loading study' }).click();
-    await page.getByRole('button', { name: 'Data', exact: true }).click();
-    await visible(page.locator('#heading-data'));
-    await page.waitForFunction(() => {
-      const heading = document.getElementById('heading-data').getBoundingClientRect();
-      const viewport = document.querySelector('.entry-scroll').getBoundingClientRect();
-      return heading.top >= viewport.top && heading.top < viewport.top + 100;
+  await check('Rapid section edits retain every section before React renders again', async () => {
+    await page.evaluate(() => {
+      const labels = ['Experimental information', 'Method', 'Notes', 'Data'];
+      for (let generation = 0; generation < 8; generation++) {
+        for (const label of labels) {
+          const target = document.querySelector(`[contenteditable="true"][aria-label="${label} editor"]`);
+          target.focus();
+          document.execCommand('selectAll', false);
+          document.execCommand('insertText', false, `${label} rapid generation ${generation}`);
+        }
+      }
     });
-    await screenshot('11-small-window');
-    const overflows = await page.evaluate(() => [...document.querySelectorAll('.app-shell, .entry-workspace, .entry-document, .sidebar')].filter(element => element.scrollWidth > element.clientWidth + 1).map(element => element.className));
-    assert.deepEqual(overflows, []);
     await page.getByRole('button', { name: 'Back to all notebooks', exact: true }).click();
-    await screenshot('12-small-directory');
-    assert.equal(await page.evaluate(() => document.querySelector('.directory-content').scrollWidth > document.querySelector('.directory-content').clientWidth + 1), false);
+    await page.locator('.notebook-card').first().waitFor();
+    const run = (await snapshot()).runs.find(item => item.id === firstId);
+    for (const section of ['information', 'method', 'notes', 'data']) assert.match(JSON.stringify(run.documents[section]), /rapid generation 7/);
+    await page.locator('.notebook-card').first().click();
+    await editor('Experimental information').waitFor();
   });
-  await check('Appearance continuum across pages and dialogs', async () => {
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('slider', { name: 'Appearance', exact: true }).focus();
-    await page.keyboard.press('End');
-    assert.equal(await page.locator('html').getAttribute('data-appearance'), '100');
-    assert.equal(await page.getByRole('dialog').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(40, 53, 49)');
-    await screenshot('13-dark-settings');
+  await check('Rich editing saves all sections and flushes on immediate navigation', async () => {
+    await fillEditor('Experimental information', 'Purpose from the editor α');
+    await editor('Experimental information').press('Meta+A');
+    await page.getByRole('button', { name: 'Link', exact: true }).click();
+    await page.getByLabel('Link URL', { exact: true }).fill('https://example.com/labmate');
+    await page.getByRole('button', { name: 'Apply link', exact: true }).click();
+    await fillEditor('Method', 'Method copied on repeat');
+    await editor('Method').press('Meta+A');
+    await page.getByRole('button', { name: 'Bold', exact: true }).click();
+    await fillEditor('Notes', 'Observed β, saved before navigating');
+    await fillEditor('Data', 'Measured 1.25 units');
+    await editor('Data').press('Meta+ArrowRight');
+    await page.getByRole('button', { name: 'Table', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to all notebooks', exact: true }).click();
+    await page.locator('.notebook-card').first().waitFor();
+    const run = (await snapshot()).runs.find(item => item.id === firstId);
+    assert.match(JSON.stringify(run.documents.information), /Purpose from the editor α/);
+    assert.match(JSON.stringify(run.documents.information), /https:\/\/example.com\/labmate/);
+    assert.match(JSON.stringify(run.documents.method), /"bold"/);
+    assert.match(JSON.stringify(run.documents.notes), /Observed β/);
+    assert.match(JSON.stringify(run.documents.data), /Measured 1.25/);
+    assert.match(JSON.stringify(run.documents.data), /"table"/);
+    await page.locator('.notebook-card').first().click();
+    await shot('03-editor');
+  });
+  await check('Appearance and section tabs retain shared editor content', async () => {
+    await openSettings();
+    const slider = page.getByRole('slider', { name: 'Appearance', exact: true });
+    await slider.focus(); await page.keyboard.press('End');
+    await page.waitForFunction(() => document.documentElement.dataset.appearance === '100');
+    await page.getByRole('radio', { name: /Section tabs/ }).check();
+    await shot('04-settings-dark');
     await closePanel();
-    await screenshot('14-dark-directory');
-
-    const colors = [];
-    for (const amount of [0, 25, 50, 75, 100]) {
-      await setAppearance(amount);
-      colors.push(await page.locator('html').evaluate(element => getComputedStyle(element).getPropertyValue('--canvas')));
-      await screenshot(`appearance-${amount}`);
-    }
-    assert.equal(new Set(colors).size, 5);
-    await page.getByRole('button', { name: 'Adjust appearance', exact: true }).click();
-    await page.getByRole('slider', { name: 'Appearance', exact: true }).focus();
-    await page.keyboard.press('Home');
+    await page.getByRole('tab', { name: 'Method', exact: true }).click();
+    assert.match(await editor('Method').innerText(), /Method copied on repeat/);
+    await page.getByRole('tab', { name: 'Method', exact: true }).focus();
     await page.keyboard.press('ArrowRight');
-    assert.equal(await page.locator('html').getAttribute('data-appearance'), '1');
-    await page.keyboard.press('End');
-    await closePanel();
-
-    await page.locator('.notebook-card').first().click();
-    assert.equal(await page.locator('html').getAttribute('data-appearance'), '100');
-    await screenshot('15-dark-notebook');
-    await page.getByRole('button', { name: 'Open citation library', exact: true }).click();
-    await screenshot('16-dark-citations');
-    await closePanel();
-    await page.getByRole('button', { name: 'Export entry', exact: true }).click();
-    await screenshot('17-dark-export');
-    await closePanel();
-    await setAppearance(0);
-    assert.equal(await page.locator('html').getAttribute('data-appearance'), '0');
+    assert.equal(await page.getByRole('tab', { name: 'Notes', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.match(await editor('Notes').innerText(), /Observed β/);
   });
-  await check('Organization tracker, status changes, filtering, and entry links', async () => {
+  await check('Repeat run, working search, and numeric sorting', async () => {
+    await page.getByRole('button', { name: 'Repeat experiment', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Create repeat run', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    const state = await snapshot(); assert.equal(state.runs.length, 2);
+    const repeated = state.runs.find(item => item.id !== firstId);
+    assert.equal(repeated.runNumber, 2);
+    assert.equal(JSON.stringify(repeated.documents.notes).includes('Observed'), false);
+    await page.getByRole('textbox', { name: 'Search entries', exact: true }).fill('Observed β');
+    assert.equal(await page.locator('.entry-list-item').count(), 1);
+    await page.getByRole('textbox', { name: 'Search entries', exact: true }).fill('');
+    await page.getByRole('combobox', { name: 'Sort entries', exact: true }).selectOption('number-desc');
+    assert.match(await page.locator('.entry-list-item').first().innerText(), /UI-test-1-2/);
+    await page.getByRole('combobox', { name: 'Sort entries', exact: true }).selectOption('number-asc');
+  });
+  await check('Create ordered scheme membership with a keyboard alternative', async () => {
+    await page.getByRole('button', { name: 'New scheme', exact: true }).click();
+    await page.getByLabel('Scheme name', { exact: true }).fill('UI comparison');
+    const repeatedId = (await snapshot()).runs.find(item => item.id !== firstId).id;
+    await page.locator(`[data-scheme-run="${firstId}"] input`).check();
+    await page.locator(`[data-scheme-run="${repeatedId}"] input`).check();
+    await page.waitForFunction(() => document.querySelectorAll('.scheme-member.included').length === 2);
+    await page.locator(`[data-scheme-run="${repeatedId}"]`).focus();
+    await page.keyboard.press('Alt+ArrowUp');
+    await page.waitForFunction(id => document.querySelector('.scheme-member')?.getAttribute('data-scheme-run') === id, repeatedId);
+    await page.getByRole('dialog').getByRole('button', { name: 'Save scheme', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    const state = await snapshot();
+    assert.equal(state.schemes.length, 1);
+    assert.equal(state.schemes[0].runIds[1], firstId);
+    await page.getByRole('button', { name: 'UI comparison', exact: true }).click();
+    assert.match(await page.locator('.entry-list-item').first().innerText(), /UI-test-1-2/);
+    await shot('05-scheme-dark');
+  });
+  await check('Metadata saves flush drafts and subsequent editing uses the current revision', async () => {
+    await page.getByRole('tab', { name: 'Notes', exact: true }).click();
+    await fillEditor('Notes', 'Draft before metadata update');
+    await page.getByRole('button', { name: 'Edit metadata', exact: true }).click();
+    await page.getByLabel('Author', { exact: true }).fill('Updated UI author');
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    await fillEditor('Notes', 'Draft after metadata update');
+    await page.getByRole('button', { name: 'Edit experiment label', exact: true }).click();
+    await page.getByLabel('Experiment label', { exact: true }).fill('UI-renamed');
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Back to all notebooks', exact: true }).click();
+    await page.locator('.notebook-card').first().waitFor();
+    const state = await snapshot();
+    assert.equal(state.experiments[0].label, 'UI-renamed');
+    assert.ok(state.runs.some(run => run.author === 'Updated UI author' && JSON.stringify(run.documents.notes).includes('Draft after metadata update')));
+    await page.locator('.notebook-card').first().click();
+  });
+  await check('Parent Trash restoration and demonstration mode preserve the real library', async () => {
+    const before = await snapshot();
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Move notebook to Trash', exact: true }).click();
+    await page.getByRole('heading', { name: 'Lab notebooks', exact: true }).waitFor();
+    assert.equal(await page.locator('.notebook-card').count(), 0);
+    await openSettings();
+    await page.getByRole('tab', { name: 'Trash', exact: true }).click();
+    await page.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.getByText('Trash is empty', { exact: true }).waitFor();
+    await closePanel();
+    assert.equal((await snapshot()).runs.length, before.runs.length);
+    await page.getByRole('complementary', { name: 'Main navigation' }).getByRole('button', { name: 'View demonstration content', exact: true }).click();
+    await page.getByText('Demonstration mode', { exact: true }).waitFor();
+    await page.locator('.notebook-card').first().click();
+    assert.equal(await page.locator('[contenteditable="true"]').count(), 0);
+    await page.getByRole('button', { name: 'Return to my library', exact: true }).click();
+    await page.getByRole('heading', { name: 'Lab notebooks', exact: true }).waitFor();
+    assert.deepEqual((await snapshot()).runs, before.runs);
+    await page.waitForFunction(() => document.documentElement.dataset.appearance === '100');
+    await page.locator('.notebook-card').first().click();
+    await page.getByRole('tab', { name: 'Notes', exact: true }).waitFor();
+  });
+  await check('Tracker status saves and keeps focus after moving a card', async () => {
     await page.getByRole('button', { name: 'Experiment tracker', exact: true }).click();
-    await visible(page.getByRole('heading', { name: 'Experiment tracker', exact: true }));
-    for (const status of ['To-Do', 'In Progress', 'Complete']) await visible(page.getByRole('heading', { name: status, exact: true }));
-    assert.equal(await page.locator('.tracker-card').count(), 7);
-    assert.equal(await page.locator('.tracker-column.todo .tracker-card').count(), 2);
-    assert.equal(await page.locator('.tracker-column.progress .tracker-card').count(), 2);
-    assert.equal(await page.locator('.tracker-column.complete .tracker-card').count(), 3);
-    await screenshot('18-tracker-light');
-    await page.getByLabel('Status for Solvent comparison', { exact: true }).selectOption('complete');
-    assert.equal(await page.evaluate(() => document.activeElement?.id), 'status-cat-11-1');
-    assert.equal(await page.locator('.tracker-column.complete .tracker-card').count(), 4);
-    await visible(page.locator('.tracker-summary').getByText('4 of 7 sample experiments complete.', { exact: false }));
-    await setAppearance(100);
-    await screenshot('19-tracker-dark');
-    await page.getByLabel('Filter tracker by notebook', { exact: true }).selectOption('materials');
     assert.equal(await page.locator('.tracker-card').count(), 2);
-    await visible(page.locator('.tracker-column.todo .tracker-empty'));
-    await page.getByRole('button', { name: 'Polymer film repeat', exact: true }).click();
-    await visible(page.getByRole('heading', { name: 'Polymer film repeat', exact: true }));
-    assert.equal(await page.locator('html').getAttribute('data-appearance'), '100');
-    await page.getByRole('button', { name: 'Experiment tracker', exact: true }).click();
-    assert.equal(await page.getByLabel('Status for Solvent comparison', { exact: true }).inputValue(), 'complete');
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 700));
-    await screenshot('20-tracker-small-dark');
-    const overflows = await page.evaluate(() => [...document.querySelectorAll('.tracker-main, .tracker-content, .tracker-board, .tracker-column')].filter(element => element.scrollWidth > element.clientWidth + 1).map(element => element.className));
-    assert.deepEqual(overflows, []);
+    const control = page.locator(`#status-${firstId}`);
+    await control.selectOption('complete');
+    await page.waitForFunction(id => document.activeElement?.id === `status-${id}` && document.getElementById(`status-${id}`)?.value === 'complete', firstId);
+    assert.equal((await snapshot()).runs.find(item => item.id === firstId).status, 'complete');
+    await shot('06-tracker-dark');
   });
-  await check('Sandbox, session-only state, and offline content', async () => {
-    const preferences = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
-    assert.equal(preferences.nodeIntegration, false);
-    assert.equal(preferences.contextIsolation, true);
-    assert.equal(preferences.sandbox, true);
-    assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
-    assert.equal(await page.evaluate(() => localStorage.length), 0);
-    assert.deepEqual(externalRequests, []);
-    await page.reload();
-    await visible(page.getByRole('heading', { name: 'Lab notebooks', exact: true }));
-    assert.equal(await page.locator('html').getAttribute('data-appearance'), '0');
-    await page.getByRole('button', { name: 'Experiment tracker', exact: true }).click();
-    assert.equal(await page.getByLabel('Status for Solvent comparison', { exact: true }).inputValue(), 'todo');
-    await page.getByRole('button', { name: 'LabMate home', exact: true }).click();
+  await check('Backup and Trash controls distinguish configuration and deferred integrations', async () => {
+    await openSettings();
+    await page.getByRole('tab', { name: 'Backups', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Back up now', exact: true }).isDisabled(), true);
+    await page.getByLabel('Backup password', { exact: true }).waitFor();
+    await shot('07-backup-setup');
+    await page.getByRole('tab', { name: 'Trash', exact: true }).click();
+    await page.getByText('Trash is empty', { exact: true }).waitFor();
+    await closePanel();
+  });
+  await check('Small Mac window and zoom remain usable', async () => {
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 700));
+    await shot('08-tracker-small');
+    const overflow = await page.evaluate(() => [...document.querySelectorAll('.app-shell,.tracker-main,.tracker-board,.tracker-column')].filter(item => item.scrollWidth > item.clientWidth + 1).map(item => item.className));
+    assert.deepEqual(overflow, []);
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.1));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
+    await shot('09-tracker-zoom');
+    await application.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.webContents.setZoomFactor(1); window.setSize(1440, 960); });
+  });
+  await check('Normal application close flushes the final keystrokes and restart restores preferences', async () => {
+    await page.locator('.tracker-entry-link').first().click();
+    await page.getByRole('tab', { name: 'Notes', exact: true }).click();
+    await fillEditor('Notes', 'Final keystrokes before normal close');
+    await application.close(); application = undefined;
+    await launch();
+    const state = await snapshot();
+    assert.equal(state.preferences.appearance, 100); assert.equal(state.preferences.layout, 'tabs');
+    assert.ok(state.runs.some(item => JSON.stringify(item.documents.notes).includes('Final keystrokes before normal close')));
     await page.locator('.notebook-card').first().click();
-    assert.equal(await page.getByRole('tablist').count(), 0);
-    assert.deepEqual(failures, []);
+    await page.getByRole('tab', { name: 'Notes', exact: true }).click();
+    await shot('10-reopened-editor');
+    assert.deepEqual(failures, []); assert.deepEqual(externalRequests, []);
   });
   await writeFile(path.join(output, 'checks.json'), JSON.stringify({ checkedAt: new Date().toISOString(), packaged: Boolean(process.env.LABMATE_APP_BINARY), checks, failures, externalRequests }, null, 2));
-  console.log(`Verified ${checks.length} interface checks. Screenshots: ${output}`);
+  await Promise.all(['failure.json', 'failure.png'].map(name => rm(path.join(output, name), { force: true })));
+  console.log(`Verified ${checks.length} real user interface checks.`);
 } catch (error) {
-  await screenshot('failure');
-  console.error('Renderer errors:', failures);
+  if (page && !page.isClosed()) await shot('failure').catch(() => {});
+  await writeFile(path.join(output, 'failure.json'), JSON.stringify({ error: String(error), checks, failures, externalRequests }, null, 2));
   throw error;
 } finally {
-  await application.close();
+  if (application) await application.close().catch(() => {});
+  await rm(root, { recursive: true, force: true });
 }

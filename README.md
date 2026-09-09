@@ -1,124 +1,64 @@
 # LabMate
 
-For the next implementation phase, read the [agent handoff](docs/HANDOFF.md),
-including remaining systems, dependency order, packaging constraints, and verification status.
+A standalone Apple Silicon Mac electronic lab notebook, built with Electron, React, TypeScript, and SQLite. The working library stays on your Mac; encrypted portable snapshots can be saved to Box Drive.
 
-An electronic lab notebook application, with macOS as the initial primary platform.
+Read [the handoff](docs/HANDOFF.md) for verified release status, [recovery instructions](docs/RECOVERY.md) before using backups, and [the dependency inventory](docs/DEPENDENCIES.md) for resolved versions and licenses.
 
-## Frontend skeleton
+## Local workflows
 
-A standalone Mac interface built with Electron, React, TypeScript, and Vite.
-All notebooks, experiment records, references, and attachment illustrations are
-fictional. This build has no notebook storage, backend, accounts, or integrations.
-Session state resets on relaunch.
+The functional release adds notebook and experiment creation, repeated runs, rich editing in four sections, autosave, search/sort, ordered overlapping schemes, a persistent experiment tracker, preferences, managed attachments, local exports, and recoverable Trash. A separate demonstration mode contains fictional examples; a new real library starts empty.
 
-### Working interface
+The existing warm Mac styling, notebook accents, continuous/tabbed entry layouts, and 0–100 appearance slider are retained. The local editor supports headings, marks, lists, links, tables, alignment, subscript, and superscript.
 
-- Notebook directory with grid/list views and recent-entry navigation.
-- **Organization → Experiment tracker:** To-Do, In Progress, and Complete columns
-  with notebook filtering, entry links, and session-only status changes.
-- **Appearance continuum:** use the 0–100 slider in Settings (or its sidebar
-  shortcut) to move from warm light to soft dark. Every position updates the
-  directory, editor, tracker, and panels. Arrow keys adjust by one step; Home/End
-  select the endpoints. Text contrast adapts separately to stay readable.
-- Warmer paper surfaces, sage/periwinkle/apricot notebook accents, and the LabMate
-  identity. Appearance resets to Light on relaunch.
-- Notebook sidebar, entry selection, and named scheme navigation. Overlapping
-  schemes show different sequences of the same run entries.
-- Continuous-page and section-tab layouts, selected through Settings and shared
-  across notebooks during the session.
-- New notebook, new experiment, repeat experiment, citation, and attachment panels.
-- Export options for one entry, selected entries, or a notebook, with format,
-  ordering, section inclusion/order, and data inclusion controls.
-- Keyboard-accessible dialogs with Escape dismissal and focus restoration;
-  section tabs support arrow keys, Home, and End.
+Supported attachment previews are PNG/JPEG, PDF, CSV/TSV, and XLSX. Other files can be retained and opened explicitly in an associated Mac application. Spreadsheet formulas and macros are not executed. Local export formats are Plain text, Markdown, HTML, RTF, and DOCX, with entry/section ordering and data inclusion options.
 
-### Planned capabilities shown in the interface
+Zotero, Google Docs, dictation, scientific previews, live cloud synchronization, shared accounts, signing, and notarization remain deferred.
 
-Creating or editing records, text formatting, search, sorting, scheme editing,
-file handling, dictation, citation association, Zotero connection, and export
-generation are not implemented. Actions are disabled or labeled as planned.
-Sort selections update their displayed option; only selecting a sample scheme
-changes the example sequence. Export selections never create a file or remote
-document. Dictation does not request a microphone or simulate a transcript.
+## Data and backups
 
-## Development and packaging
+The working library lives in `~/Library/Application Support/LabMate/`. Imported files are copied into managed storage; originals remain intact. Keep the live database outside cloud-synchronized folders.
 
-Requirements: macOS on Apple Silicon, Node.js 22.12+ (verified with Node.js 26),
-npm, and Apple Command Line Tools for icon generation. Network access is needed
-for the initial dependency and Electron runtime downloads. The packaged app runs
-offline.
+Configure the backup destination and password in Settings. LabMate creates authenticated, password-encrypted `.labmatebackup` archives and remembers the password using macOS-protected secure storage. Backups include Trash and referenced attachments. The working library itself is not password-encrypted.
+
+A local write to Box Drive does not prove upload completion. Box manages synchronization; use Box to confirm cloud availability when needed. Passwords and local destination configuration are excluded from backups. Restore replaces the current library after confirmation, with a rollback copy retained. See [Recovery](docs/RECOVERY.md).
+
+## Development
+
+Requirements: macOS arm64, Node.js 22.13+ (development verified with Node 26.5.0), npm, and Apple Command Line Tools. Initial dependency, Electron runtime, and native build-header downloads require network access.
 
 ```sh
 npm ci
+npm run setup:desktop
 npm start
 ```
 
-`npm start` builds and launches the native Electron window. For quick renderer
-iteration in a browser, run `npm run dev` and open the local URL printed by Vite.
-It does not provide native window controls or Electron-specific checks.
+`setup:desktop` explicitly installs Electron's runtime and rebuilds SQLite for Electron. It is needed when npm skips dependency install scripts. The renderer can be inspected using `npm run dev`; durable desktop operations require Electron.
 
 ```sh
 npm run typecheck
 npm run build
+npm run test:backend
+npm run check:appearance
 npm run package:mac
 ```
 
-The Mac bundle is generated at:
+The desktop backend/preload use explicit CommonJS sources, validated during build and included in the package. Renderer TypeScript compiles through Vite. Packaging retains production dependencies, native SQLite bindings, parser processes, and the locally bundled PDF worker.
 
-```text
-out/LabMate-darwin-arm64/LabMate.app
-```
-
-Open it in Finder or run:
+The local review bundle, without Developer ID signing or notarization, is `out/LabMate-darwin-arm64/LabMate.app`:
 
 ```sh
 open 'out/LabMate-darwin-arm64/LabMate.app'
 ```
 
-This is a local review build. Developer ID signing, notarization, Intel builds,
-and production distribution are deferred. Dependencies, build output, and
-verification screenshots are excluded from Git.
-
-## Interface verification
-
-After `npm run build`, run `npm run check:ui` to launch Electron and check the
-navigation, forms, layouts, scheme examples, attachment/citation panels, export
-options, appearance endpoints and intermediate settings, the organization tracker, minimum window size, renderer
-sandbox, and session reset behavior.
-Screenshots and a check report are written under `artifacts/ui/`.
-
-To exercise the packaged app instead of the source entry point:
+## Verification
 
 ```sh
+LABMATE_REQUIRE_PACKAGE=1 npm run test:backend
+LABMATE_APP_BINARY="$PWD/out/LabMate-darwin-arm64/LabMate.app/Contents/MacOS/LabMate" npm run check:functional
 LABMATE_APP_BINARY="$PWD/out/LabMate-darwin-arm64/LabMate.app/Contents/MacOS/LabMate" npm run check:ui
+npm run check:dependencies
 ```
 
-The checks interact only with fictional interface content. They do not test
-backend or integration behavior that this skeleton intentionally does not have.
+Automated functional checks use disposable libraries and synthetic files, never personal notebook records or a real Box destination. Native dialogs are substituted with disposable paths where file selection needs automation. These checks are distinct from real Keychain/Box-account acceptance. Reports and screenshots are under `artifacts/` and excluded from Git.
 
-`npm run check:appearance` verifies all 101 slider positions, preserved endpoint
-backgrounds, monotonic brightness, and a minimum 4.5:1 contrast for the checked
-text/surface pairs. The native OS controls use their nearest light/dark scheme;
-the application colors vary continuously. Appearance remains session-only.
-
-## Organization
-
-- `src/fixtures.ts` and `src/types.ts`: fictional records and display types.
-- `src/App.tsx`: directory, navigation, notebook workspace, and session state.
-- `src/components.tsx` and `src/panels.tsx`: reusable content, dialogs, and options.
-- `src/styles.css`: Mac-oriented layout, typography, and responsive styling.
-- `src/appearance.ts`: palette interpolation and readable text colors.
-- `src/theme.css`: appearance controls, visual accents, and tracker styling.
-- `src/Tracker.tsx`: the organization board over fictional notebook entries.
-- `electron/main.cjs`: isolated desktop shell with a local application protocol.
-- `scripts/`: packaging, code-drawn app icon, and interface verification.
-
-The renderer has no Node access, preload bridge, or filesystem access. The
-packaged shell permits application content only and denies permission requests,
-external navigation, and new windows. Only the compiled UI and desktop shell are
-needed at runtime; the packaging step removes source Node dependencies.
-
-See [Integration notes](docs/integration-notes.md) for future editor, viewer,
-export, and Zotero integration boundaries. Keep personal lab data and credentials
-out of this public repository.
+For isolated development/testing, set `LABMATE_LIBRARY_ROOT` to a disposable folder. Do not point it at an existing unrelated folder. The renderer has no direct Node, shell, arbitrary filesystem, or arbitrary network access; native capabilities go through the narrow validated preload interface.

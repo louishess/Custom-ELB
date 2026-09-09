@@ -1,67 +1,42 @@
-export type SectionId = 'information' | 'method' | 'notes' | 'data';
-export type EntryLayout = 'continuous' | 'tabs';
-export type EntryStatus = 'todo' | 'progress' | 'complete';
-export type AttachmentKind = 'image' | 'pdf' | 'spreadsheet' | 'scientific';
+import type {
+  AttachmentRecord,
+  ExperimentRecord,
+  LibrarySnapshot,
+  NotebookRecord,
+  Preferences,
+  RunRecord,
+  SchemeRecord,
+  SectionDocuments,
+  SectionId,
+  Status,
+} from '../shared/contracts';
 
-export interface Attachment {
-  id: string;
-  name: string;
-  kind: AttachmentKind;
-  size: string;
-  caption: string;
-}
+export type { SectionId, SectionDocuments };
+export type { LibrarySnapshot } from '../shared/contracts';
+export type EntryLayout = Preferences['layout'];
+export type EntryStatus = Status;
+export type AttachmentKind = AttachmentRecord['kind'];
+export type Attachment = AttachmentRecord;
+export type Entry = RunRecord & { attachments?: AttachmentRecord[] };
+export type Experiment = ExperimentRecord;
+export type Notebook = NotebookRecord;
+export type Scheme = SchemeRecord;
 
-export interface Citation {
-  id: string;
-  title: string;
-  authors: string;
-  year: string;
-  journal: string;
-  collection: string;
-}
-
-export interface Entry {
-  id: string;
-  notebookId: string;
-  title: string;
-  label: string;
-  experimentNumber: number;
-  runNumber: number;
-  date: string;
-  author: string;
-  objective: string;
-  description: string;
-  method: string[];
-  observation: string;
-  nextStep: string;
-  reagent: string;
-  amount: string;
-  citationIds: string[];
-  attachments: Attachment[];
-}
-
-export interface Notebook {
-  id: string;
-  name: string;
-  description: string;
-  discipline: string;
-  color: 'sage' | 'blue' | 'clay';
-  modified: string;
-}
-
-export interface Scheme {
-  id: string;
-  notebookId: string;
-  name: string;
-  description: string;
-  entryIds: string[];
-}
+export type SettingsTab = 'general' | 'backups' | 'trash';
 
 export type Panel =
-  | { kind: 'settings' }
+  | { kind: 'settings'; tab?: SettingsTab }
   | { kind: 'new-notebook' }
   | { kind: 'new-experiment' }
-  | { kind: 'repeat' }
-  | { kind: 'citations' }
+  | { kind: 'repeat'; runId?: string }
   | { kind: 'attachment'; attachment: Attachment }
-  | { kind: 'export'; scope: 'entry' | 'selected' | 'notebook' };
+  | { kind: 'export'; scope: 'entry' | 'selected' | 'notebook' }
+  | { kind: 'scheme'; schemeId?: string }
+  | { kind: 'metadata'; target: 'notebook' | 'experiment' | 'run' }
+  | { kind: 'citations' };
+
+export type AppMode = 'real' | 'demo';
+export type SnapshotState =
+  | { status: 'loading' }
+  | { status: 'ready'; snapshot: LibrarySnapshot }
+  | { status: 'error'; message: string };
