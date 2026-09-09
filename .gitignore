@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100/
+.Trashes/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+
+# Editor and temporary files
+*.swp
+*.swo
+*~
+*.log
+
+# macOS / Swift build output and per-user Xcode state
+.build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# Local application data (keep synthetic fixtures elsewhere)
+local-data/
+local-backups/
