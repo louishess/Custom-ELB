@@ -8,7 +8,7 @@ const { ZipArchive } = require('archiver');
 const yauzl = require('yauzl');
 
 const FORMAT_VERSION = 1;
-const SUPPORTED_SCHEMA_VERSION = 1;
+const { SCHEMA_VERSION: SUPPORTED_SCHEMA_VERSION, columnsForVersion } = require('./schema.cjs');
 const MAGIC = Buffer.from('LABMATE-ENCRYPTED-BACKUP\0', 'utf8');
 const HEADER_LENGTH_BYTES = 4;
 const AUTH_TAG_BYTES = 16;
@@ -607,14 +607,15 @@ function validateCandidateSchema(candidatePath, manifestSchemaVersion, store, op
     if (Number.isInteger(userVersion) && userVersion > SUPPORTED_SCHEMA_VERSION) {
       throw backupError('CORRUPT_BACKUP', 'The restored database uses a newer schema.');
     }
-    if (Number.isInteger(userVersion) && userVersion > 0 && userVersion !== manifestSchemaVersion) {
+    if (!Number.isInteger(userVersion) || userVersion !== manifestSchemaVersion) {
       throw backupError('CORRUPT_BACKUP', 'The database schema does not match the backup manifest.');
     }
-    const currentTables = schemaTablesFromDb(store && store.db);
+    const requiredColumns = columnsForVersion(manifestSchemaVersion);
+    const currentTables = Object.keys(requiredColumns);
     const candidateTables = schemaTablesFromDb(db);
     for (const table of currentTables) {
       if (!candidateTables.includes(table)) throw backupError('CORRUPT_BACKUP', 'The restored database schema is missing a table.');
-      const currentColumns = schemaColumnsFromDb(store.db, table);
+      const currentColumns = requiredColumns[table];
       const candidateColumns = schemaColumnsFromDb(db, table);
       for (const column of currentColumns) {
         if (!candidateColumns.includes(column)) throw backupError('CORRUPT_BACKUP', 'The restored database schema is missing a column.');

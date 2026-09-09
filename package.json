@@ -1,15 +1,16 @@
 {
   "name": "labmate",
   "productName": "LabMate",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "description": "A Mac-first local electronic lab notebook with encrypted backups",
   "author": "Louis Hess",
   "main": "electron/main.cjs",
   "scripts": {
+    "build:speech": "node scripts/build-speech.mjs",
     "dev": "vite --host 127.0.0.1",
-    "start": "npm run build && electron .",
+    "start": "npm run build:speech && npm run build && electron .",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && node scripts/check-desktop.mjs && vite build",
     "package:mac": "npm run build && node scripts/package.mjs",
@@ -19,7 +20,11 @@
     "test:backend": "node --test tests/*.test.cjs",
     "check:functional": "node scripts/check-functional.mjs",
     "check:dependencies": "node scripts/dependency-inventory.mjs",
-    "setup:desktop": "node node_modules/electron/install.js && npm run rebuild:native"
+    "setup:desktop": "node node_modules/electron/install.js && npm run rebuild:native",
+    "check:tables": "node scripts/check-tables.mjs",
+    "check:yield": "node scripts/check-yield.mjs",
+    "check:palettes": "node scripts/check-palettes.mjs",
+    "check:dictation": "node scripts/check-dictation.mjs"
   },
   "dependencies": {
     "@tiptap/extension-highlight": "3.31.3",

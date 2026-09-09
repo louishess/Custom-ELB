@@ -93,13 +93,14 @@ test('starts empty, persists through reopen, and keeps numbering monotonic after
   assert.deepEqual(initial.notebooks, []);
   assert.deepEqual(initial.experiments, []);
   assert.deepEqual(initial.runs, []);
-  assert.equal(initial.schemaVersion, 1);
+  assert.equal(initial.schemaVersion, 2);
   assert.deepEqual(
     store.db.prepare('SELECT DISTINCT document_schema_version AS version FROM documents').all(),
     [],
   );
   assert.deepEqual(initial.preferences, {
     appearance: 0,
+    palette: 'sage',
     layout: 'continuous',
     directoryView: 'grid',
     sort: 'newest',
@@ -281,7 +282,7 @@ test('keeps shared attachment objects until the final metadata reference is gone
   const one = attachment(first.run.id, hash);
   const two = attachment(second.run.id, hash);
   const addedOne = store.addAttachment(one);
-  assert.equal(addedOne.schemaVersion, 1);
+  assert.equal(addedOne.schemaVersion, 2);
   assert.equal(addedOne.attachments.some(item => item.id === one.id), true);
   assert.throws(() => store.addAttachment(one), error => error && error.code === 'VALIDATION');
   const addedTwo = store.addAttachment(two);
@@ -356,7 +357,7 @@ test('stores overlapping ordered schemes and preferences with same-notebook vali
   snapshot = value(store.dispatch('preferences.update', {
     appearance: 72, layout: 'tabs', directoryView: 'list', sort: 'number-asc',
   }));
-  assert.deepEqual(snapshot.preferences, { appearance: 72, layout: 'tabs', directoryView: 'list', sort: 'number-asc' });
+  assert.deepEqual(snapshot.preferences, { appearance: 72, palette: 'sage', layout: 'tabs', directoryView: 'list', sort: 'number-asc' });
   store.close();
   store.reopen();
   assert.deepEqual(store.snapshot().preferences, snapshot.preferences);
@@ -554,4 +555,25 @@ test('rolls back all document writes and the run revision after a mid-transactio
   const after = store.snapshot().runs[0];
   assert.equal(after.revision, before.revision);
   assert.deepEqual(after.documents, before.documents);
+});
+
+test('schema 1 libraries migrate transactionally to sage and retain records and preferences', () => {
+  const {root, store} = openStore();
+  const notebook = createNotebook(store, 'Legacy notebook');
+  value(store.dispatch('preferences.update', {appearance: 42}));
+  store.close();
+  const legacy = new BetterSqlite3(path.join(root, 'library.sqlite'));
+  legacy.exec('ALTER TABLE preferences DROP COLUMN palette');
+  legacy.pragma('user_version = 1');
+  legacy.close();
+  store.reopen();
+  const migrated = store.snapshot();
+  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.notebooks[0].id, notebook.id);
+  assert.equal(migrated.preferences.appearance, 42);
+  assert.equal(migrated.preferences.palette, 'sage');
+  value(store.dispatch('preferences.update', {palette: 'ocean'}));
+  store.close(); store.reopen();
+  assert.equal(store.snapshot().preferences.palette, 'ocean');
+  errorCode(store.dispatch('preferences.update', {palette: 'unrecognized'}), 'VALIDATION');
 });

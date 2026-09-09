@@ -1,0 +1,15 @@
+.yield-card { margin: 18px 0; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); color: var(--ink); font-family: inherit; }
+.yield-card.selected { outline: 2px solid var(--ink-secondary); outline-offset: 2px; }
+.yield-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.yield-card-heading strong { display: inline-flex; align-items: center; gap: 8px; }
+.yield-input-group { margin-top: 15px; }
+.yield-card .yield-input-group h4 { font-size: 13px; margin: 0 0 8px; }
+.yield-card label { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 12px; color: var(--ink-secondary); }
+.yield-card input, .yield-card select { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
+.yield-card input:focus-visible, .yield-card select:focus-visible { outline: 2px solid var(--ink-secondary); outline-offset: 2px; }
+.yield-amount-row { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(70px, .5fr) minmax(80px, .65fr); gap: 10px; margin-top: 10px; }
+.yield-result { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; }
+.yield-result strong { font-size: 20px; }
+.yield-warning { flex-basis: 100%; font-weight: 600; }
+.yield-card .yield-basis { margin: 10px 0 0; font-size: 11px; line-height: 1.6; color: var(--ink-secondary); }
+@media (max-width: 650px) { .yield-amount-row { grid-template-columns: minmax(80px, 1fr) minmax(65px, 1fr); } .yield-amount-row > label:last-child { grid-column: 1 / -1; } .yield-card { padding: 12px; } }

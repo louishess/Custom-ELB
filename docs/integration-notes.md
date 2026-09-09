@@ -22,15 +22,15 @@ References for future verification:
 - [Zotero local API](https://www.zotero.org/support/dev/web_api/v3/local_api)
 - [Zotero plugin development](https://www.zotero.org/support/dev/client_coding/plugin_development)
 
-## Google Docs, dictation and scientific data
+## Google Docs and scientific data
 
 Google Docs is a connected destination, separate from the five implemented
 local export formats. It will need authorized account setup, secure tokens,
 reconnection behavior and format mapping against the shared export model.
 
-Dictation is visibly deferred and does not record audio. A future integration
-must establish system or service behavior, explicit start/stop and insertion at
-the actual editor selection, with Mac permission and cancellation testing.
+Dictation is implemented through a bundled on-device Swift helper in 0.4.
+Live microphone and offline utterance acceptance are recorded separately from
+native capability checks and automated transcript/session tests.
 
 Scientific files remain managed attachments with explicit associated-app
 opening. Add specialized viewers only after concrete formats and sample files

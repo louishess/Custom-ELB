@@ -244,8 +244,9 @@ function payloadShapeError(method, payload, internal = true) {
     case 'preferences.update':
       return isPlainObject(payload)
         && Object.keys(payload).length > 0
-        && Object.keys(payload).every(key => ['appearance', 'layout', 'directoryView', 'sort'].includes(key))
+        && Object.keys(payload).every(key => ['appearance', 'palette', 'layout', 'directoryView', 'sort'].includes(key))
         && (payload.appearance === undefined || isInteger(payload.appearance, { min: 0, max: 100 }))
+        && (payload.palette === undefined || ['sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite'].includes(payload.palette))
         && (payload.layout === undefined || ['continuous', 'tabs'].includes(payload.layout))
         && (payload.directoryView === undefined || ['grid', 'list'].includes(payload.directoryView))
         && (payload.sort === undefined || isString(payload.sort, { min: 1, max: 128 }))

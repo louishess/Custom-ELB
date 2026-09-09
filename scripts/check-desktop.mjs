@@ -14,4 +14,5 @@ async function visit(directory) {
   }
 }
 await visit('electron');
+await visit('shared');
 console.log(`Validated ${checked} desktop JavaScript modules; preload and backend are packaged as explicit CommonJS sources.`);

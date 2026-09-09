@@ -1,4 +1,4 @@
-# Backend contract — implementation v1
+# Backend contract — implementation 0.4
 
 PM-owned shared contract is `shared/contracts.ts`. Coordinate amendments with PM before changing it. All renderer-facing API methods return `{ok:true,value}` or `{ok:false,error:{code,message}}`. Internal service methods return raw values and throw errors with a `code`; `store.dispatch` may return an envelope because worker normalizes it. In particular snapshot/getAttachment/backupDatabase/close/reopen and attachment mutation helpers MUST NOT hide failures inside an unchecked Result. Mutation results are complete snapshots; renderer must not overwrite unsaved editor drafts when applying a snapshot. Snapshots include trashed entities (frontend derives ancestor visibility); no paths, credentials, or fictional fixtures are returned. Backend defaults to empty. Dates are validated YYYY-MM-DD local calendar values. IDs are UUIDs. Errors distinguish VALIDATION, NOT_FOUND, STALE_REVISION, IO, CANCELLED, UNAVAILABLE and CORRUPT_BACKUP.
 
@@ -14,8 +14,38 @@ PM-owned shared contract is `shared/contracts.ts`. Coordinate amendments with PM
 
 ## Cross-cutting frozen choices
 
-Storage schemaVersion 1; section JSON root type doc, empty paragraph default. Revision increments on each record change. Run save includes all four documents in single transaction. Independent metadata changes can yield STALE_REVISION: UI must retain pending draft and offer reload/retry, not silently replace content. Notebook/experiment renames don't change numeric IDs. Repeat copies Information and Method; date supplied by renderer validated, author/title copied, Notes/Data empty, no attachments or scheme memberships copied. Scheme membership is ordered UUID list, same notebook only, unique. Trash restore requires ancestors active (UI offers restore parent first); purge only trashed records and validates revision. Initial setup includes author entry field; no accounts. Trash permanence does not remove existing backups.
+Storage schemaVersion 2 (schema 1 remains restorable and migrates transactionally); preferences add palette with default sage; section JSON root type doc, empty paragraph default. Revision increments on each record change. Run save includes all four documents in single transaction. Independent metadata changes can yield STALE_REVISION: UI must retain pending draft and offer reload/retry, not silently replace content. Notebook/experiment renames don't change numeric IDs. Repeat copies Information and Method; date supplied by renderer validated, author/title copied, Notes/Data empty, no attachments or scheme memberships copied. Scheme membership is ordered UUID list, same notebook only, unique. Trash restore requires ancestors active (UI offers restore parent first); purge only trashed records and validates revision. Initial setup includes author entry field; no accounts. Trash permanence does not remove existing backups.
 
-Installation/package/lockfile and shared types belong to PM. Three Sol leads each have exactly two Luna worker slots, depth2 maximum, no further nesting. Each lead reviews worker changes and runs meaningful tests. All tests use disposable temp libraries and fake file destinations; no real Box writes or personal records during automated validation. PM handles shared contract changes, release handoff and final integrated acceptance.
+Installation/package/lockfile and shared types belong to the primary integrator.
+All tests use disposable libraries and destinations; no real Box writes or
+personal records during automated validation.
+
+## Version 0.4 additions
+
+- `schema.cjs` is the source of truth for supported SQLite versions and required
+  columns. Restore validates the authenticated candidate against its own
+  supported version, not against the currently open database's columns.
+  Store migration from v1 to v2 is transactional and adds palette=sage.
+- Preferences palette is one of sage/ocean/lavender/terracotta/rose/graphite;
+  validate it at the main/worker/store boundaries.
+- `yieldCalculation` is an atomic Tiptap node with version 1 inputs in attrs.
+  Numeric inputs are strings so incomplete drafts survive autosave. The shared
+  `yield.cjs` validates the shape and computes outputs for both UI and exports.
+  Derived results are never authoritative persisted values. UI adds cards in
+  Data; all section editors register the node to avoid destructive parsing.
+- Dictation remains in main/native helper, outside the serial SQLite worker.
+  `dictation.capabilities`, `prepare`, `start`, `stop`, `cancel` and
+  `onDictation` use the shared typed contract. Sessions belong to the originating
+  webContents; only that renderer receives events or controls its session.
+  No renderer-provided helper path, audio path, shell or network operation is
+  accepted. Parent/renderer shutdown terminates capture. The modal binds
+  insertion to the originating document and rejects a changed target.
+- Backups add `changeDestination` (reuse encrypted credentials) and
+  `revealDestination` (native configured-folder opener). Setup chooses a real
+  folder inside detected Box Drive. Local config retains format version 1 with
+  optional lastAttemptAt/lastFailure fields; snapshots contain no credentials.
+  BackupStatus reports configured/available separately and includes sanitized
+  progress plus attempt/failure details. A local verified copy never claims
+  cloud-upload completion.
 
 Storage-only citation_associations v1 table reserves id, run_id (FK cascade), source_instance, library_id, item_key, snapshot_json and created_at, unique per run/source/library/item. It starts empty and has no renderer methods until Zotero integration.

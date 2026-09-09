@@ -1,0 +1,11 @@
+.dictation-body { display: grid; gap: 18px; }
+.dictation-privacy { margin: 0; color: var(--ink-secondary); line-height: 1.55; }
+.dictation-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.dictation-status { flex: 1 1 240px; font-size: 13px; line-height: 1.5; }
+.dictation-status.is-recording::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: currentColor; }
+.dictation-body textarea { width: 100%; min-height: 180px; resize: vertical; line-height: 1.6; }
+.dictation-body textarea:read-only { opacity: .85; }
+.dictation-discard { padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.dictation-discard p { margin: 0 0 10px; }
+.dictation-discard button + button { margin-left: 8px; }
+@media (max-width: 600px) { .dictation-controls button { flex: 1; } }

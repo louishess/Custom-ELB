@@ -12,6 +12,7 @@
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
+const { yieldSummary } = require('../../shared/yield.cjs');
 
 let docx;
 try {
@@ -254,6 +255,9 @@ function normalizeDocNode(node, state, depth = 0) {
   }
 
   const rawType = safeText(node.type || 'paragraph');
+  // A calculation is an editable input node in the library. Export derived,
+  // readable paragraphs through the same writers used for ordinary prose.
+  if (rawType === 'yieldCalculation') return { type: 'doc', content: yieldSummary(node.attrs).map(text => ({ type: 'paragraph', content: [{ type: 'text', text: safeText(text) }] })) };
   const knownTypes = new Set([
     'doc', 'paragraph', 'heading', 'blockquote', 'bullet_list', 'ordered_list', 'list_item',
     'code_block', 'horizontal_rule', 'table', 'table_row', 'table_cell', 'table_header',
@@ -270,8 +274,11 @@ function normalizeDocNode(node, state, depth = 0) {
   if (type === 'ordered_list') attrs.order = clampInteger(node.attrs?.order, 1, 999999, 1);
   if (node.attrs && typeof node.attrs === 'object') {
     if (type === 'text' || type === 'paragraph' || type === 'heading' || type === 'table_cell' || type === 'table_header') {
-      if (typeof node.attrs.colspan === 'number') attrs.colspan = clampInteger(node.attrs.colspan, 1, 32, 1);
-      if (typeof node.attrs.rowspan === 'number') attrs.rowspan = clampInteger(node.attrs.rowspan, 1, 32, 1);
+      if (typeof node.attrs.colspan === 'number') attrs.colspan = clampInteger(node.attrs.colspan, 1, MAX_DOC_NODES, 1);
+      if (typeof node.attrs.rowspan === 'number') attrs.rowspan = clampInteger(node.attrs.rowspan, 1, MAX_DOC_NODES, 1);
+      if (['table_cell', 'table_header'].includes(type) && Array.isArray(node.attrs.colwidth)) {
+        attrs.colwidth = node.attrs.colwidth.slice(0, attrs.colspan || 1).map(width => Number.isFinite(width) && width > 0 ? Math.min(10000, Math.round(width)) : null);
+      }
       const textAlign = node.attrs.textAlign ?? node.attrs.align;
       if (typeof textAlign === 'string' && ['left', 'center', 'right'].includes(textAlign)) attrs.align = textAlign;
     }
@@ -597,9 +604,10 @@ function formatLossMetadata(format) {
   const items = [];
   if (format === 'txt') {
     items.push({ feature: 'marks', behavior: 'flattened', message: 'Plain text flattens rich-text marks.' });
-    items.push({ feature: 'tables', behavior: 'text rows', message: 'Plain text renders tables as delimited text rows.' });
+    items.push({ feature: 'tables', behavior: 'text rows', message: 'Plain text renders tables as delimited text rows; column widths and merged-cell formatting are lost.' });
     items.push({ feature: 'previews', behavior: 'caption fallback', message: 'Plain text cannot embed previews; attachment filenames and captions are used.' });
   } else if (format === 'md') {
+    items.push({ feature: 'tables', behavior: 'text rows', message: 'Markdown tables lose column widths, merged-cell formatting, and individual header-cell styling.' });
     items.push({ feature: 'unsupported-nodes', behavior: 'flattened', message: 'Markdown flattens unsupported rich-text nodes.' });
     items.push({ feature: 'images', behavior: 'relative companions', message: 'Markdown stores image previews as relative companion assets.' });
   } else if (format === 'html') {
@@ -625,15 +633,51 @@ function nodeChildren(node) {
   return Array.isArray(node?.content) ? node.content : [];
 }
 
+function cellText(cell) {
+  return nodeChildren(cell).map(child => ['text', 'hard_break'].includes(child.type) ? inlineText(child) : renderPlainBlocks(child).join(' ')).join(' ').replace(/\s+/g, ' ').trim();
+}
+
 function tableRows(node) {
-  return nodeChildren(node).filter(row => row.type === 'table_row').map(row =>
-    nodeChildren(row).filter(cell => ['table_cell', 'table_header'].includes(cell.type)).map(cell => inlineText(cell).replace(/\n+/g, ' ').trim()));
+  const layout = tableLayout(node);
+  return layout.grid.map((row, rowIndex) => Array.from({ length: layout.width }, (_, column) => {
+    const slot = row[column];
+    return slot && slot.row === rowIndex && slot.column === column ? cellText(slot.cell) : '';
+  }));
 }
 
 function tableNodeRows(node) {
   return nodeChildren(node).filter(row => row.type === 'table_row').map(row => ({
     cells: nodeChildren(row).filter(cell => ['table_cell', 'table_header'].includes(cell.type)),
   }));
+}
+
+// Tiptap omits cells covered by a rowspan. Lay out the logical grid once so
+// widths and cell positions agree across all five writers.
+function tableLayout(node) {
+  const rows = tableNodeRows(node);
+  const grid = rows.map(() => []);
+  const placements = rows.map(() => []);
+  const columnWidths = [];
+  let width = 0;
+  let slots = 0;
+  rows.forEach((row, rowIndex) => {
+    let column = 0;
+    for (const cell of row.cells) {
+      const colspan = cell.attrs?.colspan || 1;
+      const rowspan = Math.min(cell.attrs?.rowspan || 1, rows.length - rowIndex);
+      slots += colspan * rowspan;
+      if (slots > 1000000) throw new ExportError('VALIDATION', 'Table is too large to export');
+      while (Array.from({ length: colspan }, (_, offset) => grid[rowIndex][column + offset]).some(Boolean)) column++;
+      const placement = { cell, row: rowIndex, column, colspan, rowspan };
+      placements[rowIndex].push(placement);
+      for (let dy = 0; dy < rowspan; dy++) for (let dx = 0; dx < colspan; dx++) grid[rowIndex + dy][column + dx] = placement;
+      for (let dx = 0; dx < colspan; dx++) if (cell.attrs?.colwidth?.[dx]) columnWidths[column + dx] = cell.attrs.colwidth[dx];
+      column += colspan;
+      width = Math.max(width, column);
+    }
+  });
+  if (rows.length * width > 1000000) throw new ExportError('VALIDATION', 'Table is too large to export');
+  return { grid, placements, width, columnWidths: Array.from({ length: width }, (_, i) => columnWidths[i] || null) };
 }
 
 function renderPlainBlocks(node, indent = '') {
@@ -747,7 +791,7 @@ function renderMarkdownBlocks(node, depth = 0) {
   }
   if (node.type === 'list_item') return children.flatMap(child => renderMarkdownBlocks(child, depth));
   if (node.type === 'table') {
-    const rows = tableNodeRows(node).map(row => row.cells.map(cell => inlineText(cell).replace(/\n+/g, ' ').trim()));
+    const rows = tableRows(node);
     if (!rows.length) return [];
     const width = Math.max(...rows.map(row => row.length), 1);
     const normalized = rows.map(row => Array.from({ length: width }, (_, index) => row[index] || ''));
@@ -857,10 +901,14 @@ function renderHtmlBlocks(node) {
   }
   if (node.type === 'list_item') return children.map(renderHtmlBlocks).join('');
   if (node.type === 'table') {
-    const rows = tableNodeRows(node);
-    if (!rows.length) return '';
-    const width = Math.max(...rows.map(row => row.cells.length), 1);
-    return `<table><tbody>${rows.map((row, rowIndex) => `<tr>${Array.from({ length: width }, (_, index) => { const tag = rowIndex === 0 ? 'th' : 'td'; return `<${tag}>${renderHtmlInline(row.cells[index] || { type: 'text', text: '' })}</${tag}>`; }).join('')}</tr>`).join('')}</tbody></table>`;
+    const { placements, columnWidths } = tableLayout(node);
+    if (!placements.length) return '';
+    const columns = `<colgroup>${columnWidths.map(width => width ? `<col style="width:${width}px">` : '<col>').join('')}</colgroup>`;
+    return `<table>${columns}<tbody>${placements.map(row => `<tr>${row.map(({ cell, colspan, rowspan }) => {
+      const tag = cell.type === 'table_header' ? 'th' : 'td';
+      const content = nodeChildren(cell).map(child => ['text', 'hard_break'].includes(child.type) ? renderHtmlInline(child) : renderHtmlBlocks(child)).join('');
+      return `<${tag} colspan="${colspan}" rowspan="${rowspan}"${htmlBlockStyle(cell)}>${content}</${tag}>`;
+    }).join('')}</tr>`).join('')}</tbody></table>`;
   }
   return children.map(renderHtmlBlocks).join('');
 }
@@ -987,9 +1035,27 @@ function renderRtfBlocks(node, state = {}) {
   }
   if (node.type === 'list_item') return children.map(child => renderRtfBlocks(child, state)).join('');
   if (node.type === 'table') {
-    return tableNodeRows(node).map(row => {
-      const width = Math.max(row.cells.length, 1);
-      return `{\\trowd ${row.cells.map((cell, index) => `\\cellx${Math.round((index + 1) * (9000 / width))}`).join(' ')}${row.cells.map(cell => `${renderRtfInline(cell, state)}\\cell`).join('')}\\row}\n`;
+    const { grid, width, columnWidths } = tableLayout(node);
+    return grid.map((row, rowIndex) => {
+      let boundary = 0;
+      const properties = Array.from({ length: width }, (_, column) => {
+        const slot = row[column];
+        boundary += Math.round((columnWidths[column] || 120) * 15);
+        const horizontal = slot?.colspan > 1 ? (slot.column === column ? '\\clmgf' : '\\clmrg') : '';
+        const vertical = slot?.rowspan > 1 ? (slot.row === rowIndex ? '\\clvmgf' : '\\clvmrg') : '';
+        return `${horizontal}${vertical}\\cellx${boundary}`;
+      }).join('');
+      const content = Array.from({ length: width }, (_, column) => {
+        const slot = row[column];
+        let text = '';
+        if (slot && slot.row === rowIndex && slot.column === column) {
+          text = nodeChildren(slot.cell).map(child => ['text', 'hard_break'].includes(child.type) ? renderRtfInline(child, state) : renderRtfBlocks(child, state)).join('').replace(/\\par\n$/, '');
+          if (slot.cell.type === 'table_header') text = `{\\b ${text}}`;
+        }
+        return `\\pard\\intbl ${text}\\cell `;
+      }).join('');
+      const header = row.every(slot => slot?.cell.type === 'table_header') ? '\\trhdr ' : '';
+      return `{\\trowd ${header}${properties}${content}\\row}\n`;
     }).join('');
   }
   return children.map(child => renderRtfBlocks(child, state)).join('');
@@ -1093,16 +1159,27 @@ function docxAlignment(node) {
 }
 
 function docxTableNode(node, model) {
-  const rows = tableNodeRows(node);
-  if (!rows.length) return null;
-  const width = Math.max(...rows.map(row => row.cells.length), 1);
+  const { placements, columnWidths } = tableLayout(node);
+  if (!placements.length) return null;
+  const widths = columnWidths.map(width => Math.round((width || 120) * 15));
+  const headerMarks = node => ({ ...node, ...(node.type === 'text' ? { marks: [...(node.marks || []), { type: 'bold' }] } : {}), ...(node.content ? { content: node.content.map(headerMarks) } : {}) });
   return new docx.Table({
-    rows: rows.map((row, rowIndex) => new docx.TableRow({
-      children: Array.from({ length: width }, (_, index) => new docx.TableCell({
-        children: [new docx.Paragraph({ children: row.cells[index] ? docxInlineChildren(row.cells[index], model, rowIndex === 0 ? [{ type: 'bold' }] : []) : [new docx.TextRun('')] })],
-      })),
+    rows: placements.map(row => new docx.TableRow({
+      tableHeader: row.length > 0 && row.every(({ cell }) => cell.type === 'table_header'),
+      children: row.map(({ cell, column, colspan, rowspan }) => {
+        const content = cell.type === 'table_header' ? headerMarks(cell) : cell;
+        const blocks = nodeChildren(content).flatMap(child => ['text', 'hard_break'].includes(child.type) ? [docxParagraphNode({ content: [child] }, model)] : docxBlockNodes(child, model));
+        return new docx.TableCell({
+          columnSpan: colspan,
+          rowSpan: rowspan,
+          width: { size: widths.slice(column, column + colspan).reduce((sum, value) => sum + value, 0), type: docx.WidthType.DXA },
+          children: blocks.length ? blocks : [new docx.Paragraph('')],
+        });
+      }),
     })),
-    width: { size: 100, type: docx.WidthType?.PERCENTAGE || 'pct' },
+    columnWidths: widths,
+    layout: docx.TableLayoutType.FIXED,
+    width: { size: widths.reduce((sum, value) => sum + value, 0), type: docx.WidthType.DXA },
   });
 }
 

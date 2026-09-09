@@ -14,17 +14,19 @@ try {
   betterSqliteLoadError = error;
 }
 
-const SCHEMA_VERSION = 1;
+const { SCHEMA_VERSION, PALETTES, columnsForVersion } = require('./schema.cjs');
+const { validateYieldInputs } = require('../../shared/yield.cjs');
 const DATABASE_NAME = 'library.sqlite';
 const SECTION_IDS = ['information', 'method', 'notes', 'data'];
 const COLORS = new Set(['sage', 'blue', 'clay']);
 const STATUSES = new Set(['todo', 'progress', 'complete']);
 const ATTACHMENT_KINDS = new Set(['image', 'pdf', 'spreadsheet', 'scientific', 'file']);
-const PREFERENCE_KEYS = new Set(['appearance', 'layout', 'directoryView', 'sort']);
+const PREFERENCE_KEYS = new Set(['appearance', 'palette', 'layout', 'directoryView', 'sort']);
 const LAYOUTS = new Set(['continuous', 'tabs']);
 const DIRECTORY_VIEWS = new Set(['grid', 'list']);
 const DEFAULT_PREFERENCES = Object.freeze({
   appearance: 0,
+  palette: 'sage',
   layout: 'continuous',
   directoryView: 'grid',
   sort: 'newest',
@@ -189,6 +191,9 @@ function validateDocNode(node, location, seen) {
   if (typeof node.type !== 'string' || node.type.trim().length === 0) {
     throw new StoreError('VALIDATION', `${location}.type must be a non-empty string.`);
   }
+  if (node.type === 'yieldCalculation' && !validateYieldInputs(node.attrs)) {
+    throw new StoreError('VALIDATION', 'Yield calculation inputs are malformed or use an unsupported version.');
+  }
   if (Object.prototype.hasOwnProperty.call(node, 'text') && typeof node.text !== 'string') {
     throw new StoreError('VALIDATION', `${location}.text must be a string.`);
   }
@@ -250,6 +255,10 @@ function validatePreferencesChange(changes) {
   const unknown = Object.keys(changes).filter(key => !PREFERENCE_KEYS.has(key));
   if (unknown.length) throw new StoreError('VALIDATION', `Unknown preference: ${unknown[0]}.`);
   const result = {};
+  if (Object.prototype.hasOwnProperty.call(changes, 'palette')) {
+    if (!PALETTES.includes(changes.palette)) throw new StoreError('VALIDATION', 'Unknown appearance palette.');
+    result.palette = changes.palette;
+  }
   if (Object.prototype.hasOwnProperty.call(changes, 'appearance')) {
     result.appearance = validateInteger(changes.appearance, 'appearance', { min: 0, max: 100 });
   }
@@ -389,22 +398,12 @@ const SCHEMA_SQL = [
     appearance INTEGER NOT NULL CHECK (appearance BETWEEN 0 AND 100),
     layout TEXT NOT NULL CHECK (layout IN ('continuous', 'tabs')),
     directory_view TEXT NOT NULL CHECK (directory_view IN ('grid', 'list')),
-    sort TEXT NOT NULL
+    sort TEXT NOT NULL,
+    palette TEXT NOT NULL DEFAULT 'sage' CHECK (palette IN ('sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite'))
   )`,
 ];
 
-const REQUIRED_COLUMNS = {
-  notebooks: ['id', 'name', 'description', 'discipline', 'color', 'revision', 'created_at', 'updated_at', 'trashed_at'],
-  experiments: ['id', 'notebook_id', 'label', 'experiment_number', 'revision', 'created_at', 'updated_at', 'trashed_at'],
-  runs: ['id', 'notebook_id', 'experiment_id', 'label', 'experiment_number', 'run_number', 'title', 'date', 'author', 'status', 'revision', 'created_at', 'updated_at', 'trashed_at'],
-  documents: ['run_id', 'section_id', 'document_schema_version', 'json'],
-  attachments: ['id', 'run_id', 'name', 'mime', 'size', 'hash', 'caption', 'kind', 'created_at'],
-  citation_associations: ['id', 'run_id', 'source_instance', 'library_id', 'item_key', 'snapshot_json', 'created_at'],
-  schemes: ['id', 'notebook_id', 'name', 'description', 'revision', 'created_at'],
-  scheme_members: ['scheme_id', 'run_id', 'position'],
-  counters: ['key', 'next_number'],
-  preferences: ['id', 'appearance', 'layout', 'directory_view', 'sort'],
-};
+const REQUIRED_COLUMNS = columnsForVersion(SCHEMA_VERSION);
 
 class LibraryStore {
   constructor(root) {
@@ -482,6 +481,13 @@ class LibraryStore {
           database.pragma(`user_version = ${SCHEMA_VERSION}`);
         });
         migrate();
+      } else if (version === 1) {
+        database.transaction(() => {
+          this._verifySchema(database, 1);
+          database.exec("ALTER TABLE preferences ADD COLUMN palette TEXT NOT NULL DEFAULT 'sage' CHECK (palette IN ('sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite'))");
+          this._verifySchema(database);
+          database.pragma(`user_version = ${SCHEMA_VERSION}`);
+        })();
       } else {
         this._verifySchema(database);
       }
@@ -495,8 +501,8 @@ class LibraryStore {
     }
   }
 
-  _verifySchema(database = this.db) {
-    for (const [table, columns] of Object.entries(REQUIRED_COLUMNS)) {
+  _verifySchema(database = this.db, version = SCHEMA_VERSION) {
+    for (const [table, columns] of Object.entries(version === SCHEMA_VERSION ? REQUIRED_COLUMNS : columnsForVersion(version))) {
       const rows = database.prepare(`PRAGMA table_info(${table})`).all();
       const found = new Set(rows.map(row => row.name));
       if (rows.length === 0 || columns.some(column => !found.has(column))) {
@@ -781,7 +787,7 @@ class LibraryStore {
       runIds: members.get(row.id) || [],
       revision: Number(row.revision),
     }));
-    const preferenceRow = this.db.prepare('SELECT appearance, layout, directory_view, sort FROM preferences WHERE id = 1').get();
+    const preferenceRow = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort FROM preferences WHERE id = 1').get();
     if (!preferenceRow) throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -792,6 +798,7 @@ class LibraryStore {
       schemes,
       preferences: {
         appearance: Number(preferenceRow.appearance),
+        palette: preferenceRow.palette,
         layout: preferenceRow.layout,
         directoryView: preferenceRow.directory_view,
         sort: preferenceRow.sort,
@@ -1030,16 +1037,17 @@ class LibraryStore {
     const changes = validatePreferencesChange(payload);
     const keys = Object.keys(changes);
     if (keys.length === 0) throw new StoreError('VALIDATION', 'Preference changes are empty.');
-    const current = this.db.prepare('SELECT appearance, layout, directory_view, sort FROM preferences WHERE id=1').get();
+    const current = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort FROM preferences WHERE id=1').get();
     if (!current) throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
     const next = {
       appearance: changes.appearance ?? Number(current.appearance),
+      palette: changes.palette ?? current.palette,
       layout: changes.layout ?? current.layout,
       directoryView: changes.directoryView ?? current.directory_view,
       sort: changes.sort ?? current.sort,
     };
-    this.db.prepare(`UPDATE preferences SET appearance=?, layout=?, directory_view=?, sort=? WHERE id=1`).run(
-      next.appearance, next.layout, next.directoryView, next.sort,
+    this.db.prepare(`UPDATE preferences SET appearance=?, palette=?, layout=?, directory_view=?, sort=? WHERE id=1`).run(
+      next.appearance, next.palette, next.layout, next.directoryView, next.sort,
     );
   }
 

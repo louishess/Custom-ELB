@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, Bold, ChevronDown, FileImage, FileSpreadsheet, FileText, FlaskConical, Highlighter, Italic, Link, List, ListOrdered, Mic, Plus, Redo2, Sigma, Subscript, Superscript, Table2, Underline, Undo2, X } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, Bold, ChevronDown, FileImage, FileSpreadsheet, FileText, FlaskConical, Highlighter, Italic, Link, List, ListOrdered, Mic, Plus, Redo2, Sigma, Subscript, Superscript, Underline, Undo2, X } from 'lucide-react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
+import { closeHistory } from '@tiptap/pm/history';
 import StarterKit from '@tiptap/starter-kit';
 import Highlight from '@tiptap/extension-highlight';
 import SubscriptExtension from '@tiptap/extension-subscript';
@@ -12,6 +13,9 @@ import TextAlign from '@tiptap/extension-text-align';
 import type { Attachment, Entry, EntryLayout, SectionDocuments, SectionId } from './types';
 import { formatBytes, sections } from './fixtures';
 import { cloneDocuments } from './workflows';
+import { YieldCalculation, DEFAULT_YIELD_INPUTS } from './YieldCalculation';
+import DictationDialog from './DictationDialog';
+import { TableControls } from './TableControls';
 
 export function Planned({ children = 'Planned' }: { children?: ReactNode }) {
   return <span className="planned-label">{children}</span>;
@@ -57,9 +61,9 @@ export function AttachmentCard({ attachment, onOpen }: { attachment: Attachment;
   </button>;
 }
 
-type ToolbarProps = { editor?: Editor | null; disabled?: boolean };
+type ToolbarProps = { editor?: Editor | null; disabled?: boolean; onDictate?: () => void };
 
-export function EditorToolbar({ editor, disabled = false }: ToolbarProps) {
+export function EditorToolbar({ editor, disabled = false, onDictate }: ToolbarProps) {
   const enabled = Boolean(editor) && !disabled;
   const [headingLevel, setHeadingLevel] = useState('paragraph');
   const [linkOpen, setLinkOpen] = useState(false);
@@ -103,10 +107,11 @@ export function EditorToolbar({ editor, disabled = false }: ToolbarProps) {
       setLinkMessage('');
       setLinkOpen(true);
     }, Boolean(editor?.isActive('link')))}
-    {button('Table', <Table2 size={16} />, () => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run())}
+    <TableControls editor={editor} disabled={disabled} />
     {button('Subscript', <Subscript size={16} />, () => editor?.chain().focus().toggleSubscript().run(), Boolean(editor?.isActive('subscript')))}
     {button('Superscript', <Superscript size={16} />, () => editor?.chain().focus().toggleSuperscript().run(), Boolean(editor?.isActive('superscript')))}
     <span className="toolbar-divider" />
+    {onDictate && button('Dictate', <Mic size={16} />, onDictate)}
     {button('Undo', <Undo2 size={16} />, () => editor?.chain().focus().undo().run())}
     {button('Redo', <Redo2 size={16} />, () => editor?.chain().focus().redo().run())}
     <span className="toolbar-note">{disabled ? 'Demo mode' : enabled ? 'Editing' : 'Select a section'}</span>
@@ -147,10 +152,11 @@ export function EditorToolbar({ editor, disabled = false }: ToolbarProps) {
 const extensions = [
   StarterKit.configure({ link: { openOnClick: false, autolink: false, linkOnPaste: false } }),
   Highlight,
+  YieldCalculation,
   SubscriptExtension,
   SuperscriptExtension,
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
-  TableKit.configure({ table: { resizable: true } }),
+  TableKit.configure({ table: { resizable: true, cellMinWidth: 60, renderWrapper: true } }),
 ];
 
 function RichSection({ id, document, onChange, onEditor, onFocus, readOnly, resetToken }: { id: SectionId; document: SectionDocuments[SectionId]; onChange: (document: SectionDocuments[SectionId]) => void; onEditor: (editor: Editor | null) => void; onFocus: (section: SectionId) => void; readOnly: boolean; resetToken: number }) {
@@ -193,13 +199,20 @@ export interface RichEntryEditorProps {
   onFocusSection?: (section: SectionId) => void;
   onAttachment: (attachment: Attachment) => void;
   onAddAttachments: () => void;
-  onDictate: () => void;
   readOnly?: boolean;
   resetToken?: number;
 }
 
-export function RichEntryEditor({ run, attachments = run.attachments ?? [], documents, layout, activeSection, onDocumentsChange, onEditor, onFocusSection, onAttachment, onAddAttachments, onDictate, readOnly = false, resetToken = 0 }: RichEntryEditorProps) {
+export function RichEntryEditor({ run, attachments = run.attachments ?? [], documents, layout, activeSection, onDocumentsChange, onEditor, onFocusSection, onAttachment, onAddAttachments, readOnly = false, resetToken = 0 }: RichEntryEditorProps) {
   const [editors, setEditors] = useState<Partial<Record<SectionId, Editor>>>({});
+  const [dictation, setDictation] = useState<{ sessionId: string; runId: string; section: SectionId; editor: Editor; from: number; to: number; document: unknown } | null>(null);
+  const runRef = useRef(run.id);
+  useLayoutEffect(() => { runRef.current = run.id; }, [run.id]);
+  const beginDictation = () => {
+    const editor = editors[activeSection];
+    if (!editor || readOnly) return;
+    setDictation({sessionId: crypto.randomUUID(), runId: run.id, section: activeSection, editor, from: editor.state.selection.from, to: editor.state.selection.to, document: editor.state.doc});
+  };
   const documentsRef = useRef(documents);
   useLayoutEffect(() => { documentsRef.current = documents; }, [documents]);
   const handleEditor = (section: SectionId, editor: Editor | null) => {
@@ -220,11 +233,21 @@ export function RichEntryEditor({ run, attachments = run.attachments ?? [], docu
     onDocumentsChange(next);
   };
   return <>
-    <EditorToolbar editor={editors[activeSection]} disabled={readOnly} />
+    <EditorToolbar editor={editors[activeSection]} disabled={readOnly} onDictate={beginDictation} />
+    {dictation && <DictationDialog sessionId={dictation.sessionId} originLabel={`${run.title} · ${sections.find(section => section.id === dictation.section)?.name}`} onCancel={() => setDictation(null)} onInsert={text => {
+      if (runRef.current !== dictation.runId || dictation.editor.isDestroyed || dictation.editor.state.doc !== dictation.document) {
+        throw new Error('The destination changed. Copy your transcript before closing and reopen dictation in the current section.');
+      }
+      const content = text.split(/\r?\n/).flatMap((line, index) => [...(index ? [{type: 'hardBreak'}] : []), ...(line ? [{type: 'text', text: line}] : [])]);
+      dictation.editor.view.dispatch(closeHistory(dictation.editor.state.tr));
+      if (!dictation.editor.chain().focus().setTextSelection({from: dictation.from, to: dictation.to}).insertContent(content).run()) throw new Error('The transcript could not be inserted. Copy it before closing.');
+      dictation.editor.view.dispatch(closeHistory(dictation.editor.state.tr));
+      setDictation(null);
+    }} />}
     <div className="entry-sections">
       {sections.map((section, index) => <section key={section.id} id={`section-${section.id}`} className="entry-section" role={layout === 'tabs' ? 'tabpanel' : undefined} aria-labelledby={layout === 'tabs' ? `tab-${section.id}` : `heading-${section.id}`} tabIndex={-1} hidden={layout === 'tabs' && activeSection !== section.id}>
         <div className="section-heading"><h2 id={`heading-${section.id}`}><span className="section-number">0{index + 1}</span>{section.name}</h2>
-          {section.id === 'notes' && <button className="button button-small" type="button" onClick={onDictate} disabled title="Dictation is deferred until a local microphone integration is available"><Mic size={14} /> Dictate <Planned>Deferred</Planned></button>}
+          {section.id === 'data' && <button className="button button-small" type="button" disabled={readOnly} onClick={() => { onFocusSection?.('data'); if (editors.data) editors.data.view.dispatch(closeHistory(editors.data.state.tr)); editors.data?.chain().focus().insertContent([{type: 'yieldCalculation', attrs: {...DEFAULT_YIELD_INPUTS}}, {type: 'paragraph'}]).run(); }}><Sigma size={14} />Add yield calculation</button>}
           {section.id === 'data' && <button className="button button-small" type="button" onClick={onAddAttachments} disabled={readOnly}><Plus size={14} /> Add files{readOnly && <Planned>Demo</Planned>}</button>}
         </div>
         <RichSection id={section.id} document={documents[section.id]} onChange={document => handleChange(section.id, document)} onEditor={editor => handleEditor(section.id, editor)} onFocus={onFocusSection ?? (() => undefined)} readOnly={readOnly} resetToken={resetToken} />
@@ -252,8 +275,8 @@ export function SectionNavigation({ layout, activeSection, onSelect }: { layout:
   </nav>;
 }
 
-export function EntrySections({ entry, documents, layout, activeSection, onAttachment, onAddAttachments, onDocumentsChange, onEditor, onFocusSection, onDictate, readOnly, resetToken, attachments }: Omit<RichEntryEditorProps, 'run'> & { entry: Entry }) {
-  return <RichEntryEditor run={entry} attachments={attachments} documents={documents} layout={layout} activeSection={activeSection} onDocumentsChange={onDocumentsChange} onEditor={onEditor} onFocusSection={onFocusSection} onAttachment={onAttachment} onAddAttachments={onAddAttachments} onDictate={onDictate} readOnly={readOnly} resetToken={resetToken} />;
+export function EntrySections({ entry, documents, layout, activeSection, onAttachment, onAddAttachments, onDocumentsChange, onEditor, onFocusSection, readOnly, resetToken, attachments }: Omit<RichEntryEditorProps, 'run'> & { entry: Entry }) {
+  return <RichEntryEditor run={entry} attachments={attachments} documents={documents} layout={layout} activeSection={activeSection} onDocumentsChange={onDocumentsChange} onEditor={onEditor} onFocusSection={onFocusSection} onAttachment={onAttachment} onAddAttachments={onAddAttachments} readOnly={readOnly} resetToken={resetToken} />;
 }
 
 export function CitationChips({ onOpen, disabled = true }: { onOpen?: () => void; disabled?: boolean }) {

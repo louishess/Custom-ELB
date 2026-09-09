@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, BookOpen, Check, Cloud, FileText, FolderArchive, LayoutList, Link, List, Monitor, Moon, ShieldCheck, Sun, Trash2, Upload, XCircle } from 'lucide-react';
+import PalettePicker from './PalettePicker';
 import AttachmentPreview from './AttachmentPreview';
 import { AttachmentIcon, Modal, ModalErrorContext } from './components';
 import { activeTrash, compareRuns, isActiveRun, newJobId, normalizeSort, todayLocalDate } from './workflows';
-import { entryCode, formatBytes, formatDate, sections, sortOptions } from './fixtures';
+import { entryCode, formatBytes, sections, sortOptions } from './fixtures';
 import type { Attachment, Entry, EntryLayout, LibrarySnapshot, Notebook, Panel, SectionId, SettingsTab } from './types';
 import type { BackupStatus, Result } from '../shared/contracts';
 
@@ -90,9 +91,10 @@ function SettingsPanel({ initialTab = 'general', onClose, layout, setLayout, app
     </div>
     {tab === 'general' && <div className="modal-body">
       <div className="settings-heading"><Sun size={19} /><div><h3>Appearance</h3><p>A brighter desk or a quieter evening.</p></div></div>
-      <div className="appearance-control"><div className="appearance-control-heading"><label htmlFor="appearance-range">Find your balance</label><output htmlFor="appearance-range">{appearance}%</output></div><input id="appearance-range" type="range" min="0" max="100" step="1" value={appearance} aria-label="Appearance" aria-valuetext={appearance === 0 ? 'Light, 0 percent' : appearance === 100 ? 'Dark, 100 percent' : `${appearance} percent toward dark`} onChange={event => { const value = Number(event.target.value); setAppearance(value); void updatePreference({ appearance: value }); }} /><div className="appearance-endpoints"><span><Sun size={16} />Light <small>Warm & open</small></span><span><Moon size={16} />Dark <small>Quiet & soft</small></span></div><p>Slide to any point between light and dark. Your workspace updates as you go.</p></div>
+      <PalettePicker value={snapshot.preferences.palette ?? 'sage'} onChange={palette => void updatePreference({ palette })} />
+      <div className="appearance-control"><div className="appearance-control-heading"><label htmlFor="appearance-range">Find your balance</label><output htmlFor="appearance-range">{appearance}%</output></div><input id="appearance-range" type="range" min="0" max="100" step="1" value={appearance} aria-label="Appearance" aria-valuetext={appearance === 0 ? 'Light, 0 percent' : appearance === 100 ? 'Dark, 100 percent' : `${appearance} percent toward dark`} onChange={event => { const value = Number(event.target.value); setAppearance(value); }} /><div className="appearance-endpoints"><span><Sun size={16} />Light <small>Warm & open</small></span><span><Moon size={16} />Dark <small>Quiet & soft</small></span></div><p>Slide to any point between light and dark. Your workspace updates as you go.</p></div>
       <div className="settings-heading layout-settings-heading"><Monitor size={19} /><div><h3>Entry layout</h3><p>Choose how you move through an experiment.</p></div></div>
-      <fieldset className="layout-options"><legend className="sr-only">Entry layout</legend>{(['continuous', 'tabs'] as const).map(option => <label className={`layout-option ${layout === option ? 'selected' : ''}`} key={option}><input type="radio" name="layout" value={option} checked={layout === option} onChange={() => { setLayout(option); void updatePreference({ layout: option }); }} /><div className={`layout-miniature ${option}`} aria-hidden="true"><div className="mini-tabs"><i /><i /><i /></div><div className="mini-content"><span /><span /><span /></div>{option === 'continuous' && <div className="mini-content short"><span /><span /></div>}</div><span className="layout-option-title">{option === 'continuous' ? <LayoutList size={16} /> : <List size={16} />}{option === 'continuous' ? 'Continuous page' : 'Section tabs'}{layout === option && <Check size={16} className="selection-check" />}</span><span className="layout-option-description">{option === 'continuous' ? 'Read the full entry with section jump links.' : 'Focus on one section at a time.'}</span></label>)}</fieldset>
+      <fieldset className="layout-options"><legend className="sr-only">Entry layout</legend>{(['continuous', 'tabs'] as const).map(option => <label className={`layout-option ${layout === option ? 'selected' : ''}`} key={option}><input type="radio" name="layout" value={option} checked={layout === option} onChange={() => { setLayout(option); }} /><div className={`layout-miniature ${option}`} aria-hidden="true"><div className="mini-tabs"><i /><i /><i /></div><div className="mini-content"><span /><span /><span /></div>{option === 'continuous' && <div className="mini-content short"><span /><span /></div>}</div><span className="layout-option-title">{option === 'continuous' ? <LayoutList size={16} /> : <List size={16} />}{option === 'continuous' ? 'Continuous page' : 'Section tabs'}{layout === option && <Check size={16} className="selection-check" />}</span><span className="layout-option-description">{option === 'continuous' ? 'Read the full entry with section jump links.' : 'Focus on one section at a time.'}</span></label>)}</fieldset>
       <div className="settings-preferences"><label className="field-label">Directory view<select aria-label="Directory view" value={snapshot.preferences.directoryView} onChange={event => void updatePreference({ directoryView: event.target.value as 'grid' | 'list' })}><option value="grid">Grid</option><option value="list">List</option></select></label><label className="field-label">Default entry sort<select aria-label="Default entry sort" value={normalizeSort(snapshot.preferences.sort)} onChange={event => void updatePreference({ sort: event.target.value })}>{sortOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>
       <p className="muted-note">Preferences are saved to this library and apply when LabMate opens again.</p>
       <div className="settings-about"><BookOpen size={19} /><div><strong>LabMate</strong><p>Local electronic lab notebook</p></div><span className={`soft-badge ${mode === 'demo' ? '' : 'working-badge'}`}>{mode === 'demo' ? 'Demonstration' : 'Local library'}</span></div>
@@ -106,6 +108,8 @@ function SettingsPanel({ initialTab = 'general', onClose, layout, setLayout, app
 function BackupSettings({ mode, onRestored, onError, onBeforeOperation }: { mode: 'real' | 'demo'; onRestored: SnapshotHandler; onError: (message: string) => void; onBeforeOperation: () => Promise<boolean> }) {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [changePassword, setChangePassword] = useState(false);
   const [restorePassword, setRestorePassword] = useState('');
   const [state, setState] = useState<'idle' | 'configuring' | 'running' | 'restoring' | 'cancelling'>('idle');
   const [message, setMessage] = useState('');
@@ -113,18 +117,40 @@ function BackupSettings({ mode, onRestored, onError, onBeforeOperation }: { mode
   const [jobId, setJobId] = useState<string | null>(null);
   useEffect(() => {
     if (mode === 'demo') return;
-    void getAPI()?.backups.status(undefined).then(result => { if (result?.ok) setStatus(result.value); else if (result) onError(result.error.message); });
+    let active = true;
+    const refresh = () => { void getAPI()?.backups.status(undefined).then(result => {
+      if (!active) return;
+      if (result?.ok) setStatus(result.value); else if (result) onError(result.error.message);
+    }); };
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [mode, onError]);
   const configure = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!password.trim() || mode === 'demo') return;
+    if (!password.trim() || password !== confirmation || mode === 'demo') return;
     if (!(await onBeforeOperation())) return;
-    setState('configuring'); setMessage('Opening the native destination picker…');
+    setState('configuring'); setMessage('Opening the native Box Drive folder picker…');
     const result = await getAPI()?.backups.configure({ password });
-    if (!result) { setJobId(null); setState('idle'); onError(apiUnavailable().message); return; }
-    if (result.ok) { setStatus(result.value); setPassword(''); setMessage(result.value.message ?? 'Backup destination configured.'); }
-    else { setState('idle'); onError(result.error.message); }
+    if (!result) { setState('idle'); onError(apiUnavailable().message); return; }
+    if (result.ok) { setStatus(result.value); setPassword(''); setConfirmation(''); setChangePassword(false); setMessage(result.value.message ?? 'Backup destination configured.'); }
+    else if (result.error.code === 'CANCELLED') setMessage('Setup cancelled.');
+    else onError(result.error.message);
     setState('idle');
+  };
+  const changeDestination = async () => {
+    if (mode === 'demo' || !(await onBeforeOperation())) return;
+    setState('configuring'); setMessage('Choose a Box Drive folder. Your saved password will be reused.');
+    const result = await getAPI()?.backups.changeDestination(undefined);
+    if (result?.ok) { setStatus(result.value); setMessage(result.value.message ?? 'Destination changed.'); }
+    else if (result && result.error.code !== 'CANCELLED') onError(result.error.message);
+    else setMessage('Destination change cancelled.');
+    setState('idle');
+  };
+  const reveal = async () => {
+    const result = await getAPI()?.backups.revealDestination(undefined);
+    if (!result) onError(apiUnavailable().message);
+    else if (!result.ok) onError(result.error.message);
   };
   const runBackup = async () => {
     if (mode === 'demo') return;
@@ -144,33 +170,35 @@ function BackupSettings({ mode, onRestored, onError, onBeforeOperation }: { mode
     const activeJobId = newJobId('restore'); setJobId(activeJobId); setState('restoring'); setMessage('Restoring and validating the backup…');
     const result = await getAPI()?.backups.restore({ password: restorePassword, jobId: activeJobId });
     if (!result) { setJobId(null); setState('idle'); onError(apiUnavailable().message); return; }
-    if (result.ok) {
-      setRestorePassword('');
-      onRestored(result.value);
-      return;
-    }
+    if (result.ok) { setRestorePassword(''); onRestored(result.value); return; }
     else if (result.error.code === 'CANCELLED') setMessage('Restore cancelled.');
     else { setMessage(result.error.message); onError(result.error.message); }
     setJobId(null); setState('idle');
   };
   const cancel = async () => {
-    const activeJobId = jobId ?? progress?.jobId;
+    const activeJobId = jobId ?? status?.progress?.jobId;
     if (!activeJobId) return;
     const result = await getAPI()?.jobs.cancel({ jobId: activeJobId });
     if (!result) { onError(apiUnavailable().message); return; }
     if (!result.ok) { onError(result.error.message); return; }
     if (result.value.cancelled) { setState('cancelling'); setMessage('Cancellation requested…'); }
   };
-  const running = state === 'running' || state === 'restoring' || state === 'configuring' || state === 'cancelling';
+  // A scheduled operation may begin while Settings is already open.
+  useEffect(() => { if (state === 'cancelling' && !jobId && !status?.running) setState('idle'); }, [state, jobId, status?.running]);
+  const running = state !== 'idle' || !!status?.running;
+  const shownProgress = status?.progress ?? (jobId && progress?.jobId === jobId ? progress : null);
+  const dateTime = (value: string) => new Date(value).toLocaleString();
   return <div className="modal-body settings-backups">
-    <div className="settings-heading"><ShieldCheck size={19} /><div><h3>Encrypted backups</h3><p>Keep a restorable copy of this local library.</p></div></div>
-    <p className="panel-intro">Automatic backups run once daily after setup and catch up when LabMate opens. Credentials and backup settings stay on this Mac.</p>
+    <div className="settings-heading"><ShieldCheck size={19} /><div><h3>Encrypted Box backups</h3><p>Keep a restorable copy of this local library.</p></div></div>
+    <p className="panel-intro">Automatic backups run once daily after setup and catch up when LabMate opens. The newest seven encrypted snapshots stay on this Mac; Box destination archives are retained until you remove them. Credentials and backup settings stay on this Mac.</p>
     <p className="muted-note">Each backup supports up to 2 GiB total, 1 GiB per file, and 10,000 archive entries. If the library exceeds a limit, the backup fails without publishing a partial copy. Larger files remain attached locally.</p>
-    <div className="backup-destination"><FolderArchive size={20} /><div><strong>{status?.configured ? `Destination: ${status.destinationLabel ?? 'your selected folder'}` : 'No destination configured'}</strong><span>Box Drive manages upload after a successful local backup.</span>{status?.lastBackupAt && <small>Last verified copy {formatDate(status.lastBackupAt.slice(0, 10))}</small>}</div></div>
-    <form className="form-stack" onSubmit={configure}><label className="field-label">Backup password<input type="password" autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} placeholder={status?.configured ? 'Enter a new password to reconfigure' : 'Choose a password'} disabled={running} /></label><button className="button" disabled={!password.trim() || running || mode === 'demo'}>{state === 'configuring' ? 'Configuring…' : status?.configured ? 'Change destination' : 'Set up backups'}</button></form>
-    <div className="backup-actions"><button className="button button-primary" onClick={() => void runBackup()} disabled={!status?.configured || running || mode === 'demo'}><Upload size={15} />{state === 'running' ? 'Backing up…' : 'Back up now'}</button>{running && <button className="button" onClick={() => void cancel()} disabled={state === 'configuring' || state === 'cancelling'}><XCircle size={15} />{state === 'cancelling' ? 'Cancelling…' : 'Cancel'}</button>}</div>
+    {mode === 'demo' && <p className="panel-status">Backup setup is available in your desktop library. Demonstration mode never writes a backup.</p>}
+    <div className="backup-destination"><FolderArchive size={20} /><div><strong>{status?.configured ? `Destination: ${status.destinationLabel ?? 'your selected folder'}` : 'No destination configured'}</strong><span>{status?.configured ? status.destinationAvailable ? 'Folder available for a verified local copy.' : 'Folder unavailable. Open Box Drive or change destination.' : 'Select a folder inside Box Drive during setup.'}</span><span>Box Drive manages upload. LabMate cannot confirm cloud upload; check Box before relying on cloud recovery.</span>{status?.lastBackupAt ? <small>Last verified local copy: {dateTime(status.lastBackupAt)}</small> : status?.configured && <small>No verified copy at this destination yet.</small>}{status?.lastAttemptAt && <small>Last attempt: {dateTime(status.lastAttemptAt)}</small>}{status?.lastFailure && <small role="status">Latest failure ({dateTime(status.lastFailure.at)}): {status.lastFailure.message}</small>}</div></div>
+    {status?.configured && <div className="backup-actions"><button className="button" onClick={() => void changeDestination()} disabled={running || mode === 'demo'}>Change destination</button><button className="button" onClick={() => void reveal()} disabled={!status.destinationAvailable || mode === 'demo'}>Show in Finder</button><button className="button" onClick={() => setChangePassword(!changePassword)} disabled={running || mode === 'demo'}>{changePassword ? 'Keep saved password' : 'Change password'}</button></div>}
+    {(!status?.configured || changePassword) && <form className="form-stack" onSubmit={configure}><label className="field-label">Backup password<input type="password" autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Choose a password" disabled={running} /></label><label className="field-label">Confirm backup password<input type="password" autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} placeholder="Enter the same password" disabled={running} /></label>{confirmation && password !== confirmation && <p className="panel-status" role="status">Passwords must match.</p>}<p className="muted-note">Keep this password in a password manager. Older archives still require the password used when they were created.</p><button className="button" disabled={!password.trim() || password !== confirmation || running || mode === 'demo'}>{state === 'configuring' ? 'Configuring…' : 'Choose Box folder and save password'}</button></form>}
+    <div className="backup-actions"><button className="button button-primary" onClick={() => void runBackup()} disabled={!status?.configured || !status.destinationAvailable || running || mode === 'demo'}><Upload size={15} />{state === 'running' || status?.running ? 'Backing up…' : status?.lastBackupAt ? 'Back up now' : 'Create first backup'}</button>{running && <button className="button" onClick={() => void cancel()} disabled={state === 'configuring' || state === 'cancelling' || (!jobId && !status?.progress?.jobId)}><XCircle size={15} />{state === 'cancelling' ? 'Cancelling…' : 'Cancel'}</button>}</div>
     <form className="form-stack restore-form" onSubmit={restore}><label className="field-label">Restore password<input type="password" autoComplete="current-password" value={restorePassword} onChange={event => setRestorePassword(event.target.value)} placeholder="Password for a LabMate backup" disabled={running} /></label><button className="button" disabled={!restorePassword.trim() || running || mode === 'demo'}>{state === 'restoring' ? 'Restoring…' : 'Restore backup…'}</button></form>
-    {progress && <ProgressStatus event={progress} />}{message && <p className="panel-status" role="status">{message}</p>}
+    {shownProgress && running && <ProgressStatus event={shownProgress} />}{(message || status?.message) && <p className="panel-status" role="status">{message || status?.message}</p>}
   </div>;
 }
 

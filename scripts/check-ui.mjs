@@ -97,6 +97,7 @@ try {
     await fillEditor('Data', 'Measured 1.25 units');
     await editor('Data').press('Meta+ArrowRight');
     await page.getByRole('button', { name: 'Table', exact: true }).click();
+    await page.getByRole('button', { name: 'Insert table', exact: true }).click();
     await page.getByRole('button', { name: 'Back to all notebooks', exact: true }).click();
     await page.locator('.notebook-card').first().waitFor();
     const run = (await snapshot()).runs.find(item => item.id === firstId);
@@ -212,7 +213,7 @@ try {
   await check('Backup and Trash controls distinguish configuration and deferred integrations', async () => {
     await openSettings();
     await page.getByRole('tab', { name: 'Backups', exact: true }).click();
-    assert.equal(await page.getByRole('button', { name: 'Back up now', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Create first backup', exact: true }).isDisabled(), true);
     await page.getByLabel('Backup password', { exact: true }).waitFor();
     await shot('07-backup-setup');
     await page.getByRole('tab', { name: 'Trash', exact: true }).click();

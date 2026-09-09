@@ -1,0 +1,26 @@
+/* Additional specificity keeps table geometry independent of stylesheet load order. */
+.entry-section .tiptap-content .tableWrapper { overflow-x: auto; max-width: 100%; margin: 17px 0; padding: 2px; }
+.entry-section .tiptap-content .tableWrapper table { margin: 0; overflow: visible; }
+.entry-section .tiptap-content th, .entry-section .tiptap-content td { position: relative; box-sizing: border-box; min-width: 60px; overflow-wrap: anywhere; }
+.entry-section .tiptap-content .column-resize-handle { position: absolute; z-index: 3; top: 0; bottom: 0; right: -2px; width: 4px; background: var(--accent-ink); pointer-events: none; }
+.entry-section .tiptap-content.resize-cursor, .entry-section .tiptap-content.resize-cursor * { cursor: col-resize !important; }
+.entry-section .tiptap-content .selectedCell::after { content: ''; position: absolute; inset: 0; background: var(--accent-soft); opacity: .3; pointer-events: none; z-index: 2; }
+.table-context-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; order: 2; flex-basis: 100%; padding-top: 9px; margin-top: 6px; border-top: 1px solid var(--line); }
+.table-controls-label { color: var(--accent-ink); font-size: 12px; font-weight: 600; margin-right: 4px; }
+.table-controls-help { color: var(--ink-secondary); font-size: 11px; flex-basis: 100%; line-height: 1.5; }
+.modal.table-insert-dialog { width: min(520px, calc(100vw - 32px)); max-width: 520px; }
+.table-insert-dialog .modal-header { padding: 24px 28px 22px; }
+.table-insert-dialog .modal-header h2 { margin: 0; }
+.table-insert-dialog .table-dialog-body { display: flex; flex-direction: column; gap: 22px; padding: 28px; }
+.table-size-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.table-insert-dialog .field-label { gap: 10px; color: var(--ink); }
+.table-insert-dialog .field-label input { min-height: 44px; }
+.table-header-choice { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 13px; line-height: 1.5; }
+.table-header-choice input { flex: 0 0 16px; width: 16px; height: 16px; margin: 0; accent-color: var(--accent-ink); }
+.table-insert-dialog .field-help { margin: 0; line-height: 1.7; }
+.table-insert-dialog .table-dialog-actions { justify-content: flex-end; gap: 12px; padding: 20px 28px; }
+.table-context-controls button:focus-visible, .table-insert-dialog :is(button, input):focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+@media (max-width: 520px) {
+  .table-insert-dialog .modal-header, .table-insert-dialog .table-dialog-body, .table-insert-dialog .table-dialog-actions { padding-left: 22px; padding-right: 22px; }
+  .table-size-fields { gap: 16px; }
+}

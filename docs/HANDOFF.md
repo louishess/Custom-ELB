@@ -1,10 +1,18 @@
 # LabMate functional application handoff
 
-Updated September 9, 2026. The approved local backend is implemented for the
-Apple Silicon Mac application, version 0.3.0. The base commit remains `34b1039`;
-implementation changes are in the working tree and have not been committed or
-published. Preserve the current frontend, appearance continuum, and local-first
+Updated September 9, 2026. Version 0.4.1 builds on commit `dc90f1d`.
+These feature changes are in the working tree, uncommitted and unpublished.
+Preserve the frontend, six-palette appearance continuum, and local-first
 architecture. Read `BACKEND-CONTRACT.md` before changing subsystem interfaces.
+See `VALIDATION.md` for the evidence and remaining live acceptance checks.
+
+The 0.4.1 feedback pass fixes dictation preparation and repeated recording startup,
+and enlarges the Insert Table dialog with comfortable spacing and larger inputs.
+Yield calculation behavior is unchanged. Start now prepares/reserves the exact
+progressive transcription module before opening audio. The native helper retains
+its stopped audio engine, reconnects valid configuration changes, and rejects
+stale recording/tap callbacks. Renderer operation guards prevent cancelled
+preparation or finalization from changing a newer recording.
 
 ## Product and data boundaries
 
@@ -23,6 +31,36 @@ run number, reset status to To-Do, and leave Notes and Data empty. Numbers are
 allocated transactionally and are never reused after deletion. There is no
 user-visible revision history.
 
+The editor provides table insertion sizing, row/column actions, headers,
+merge/split, fit-to-editor and visible drag handles. Column widths and merged
+cells persist; rich exports retain them and text/Markdown report layout losses.
+Data supports versioned editable yield cards. Amounts use mol/mmol/µmol/nmol;
+the user selects one starting material as the calculation basis and provides
+its equivalents ratio to product. Inputs autosave with the document, incomplete
+values remain editable, and exports recompute a static readable summary.
+Repeat still clears Data, including yield cards.
+
+Appearance offers Original Sage, Ocean, Lavender, Terracotta, Rose and Graphite.
+All six preserve the 0–100 slider and semantic notebook/status colors. Schema 2
+adds palette persistence; schema 1 libraries and authenticated backups migrate
+to Original Sage without losing existing preferences or records.
+
+Integrated dictation uses a bundled Swift helper with Apple's SpeechAnalyzer
+and SpeechTranscriber on macOS 26+. The helper exposes capabilities and language
+preparation, then explicit Start/Stop. A modal shows the live transcript for
+correction before inserting at the saved selection in any section. Audio is
+processed in memory and never stored by LabMate. Cancel stops capture; an
+unresolved transcript blocks app close until inserted/discarded. Supported
+languages are discovered at runtime; asset preparation can require internet.
+On older/unsupported Macs, dictation displays the reason and editing remains
+available. Exact US English module preparation and real on-device recognition
+of a generated audio fixture passed. In the final packaged app, two actual
+microphone sessions stayed active for six seconds each through explicit Stop
+and restart. No live audio or transcript text was saved by the diagnostic.
+These final sessions contained no recognized speech; a preceding diagnostic
+did produce a live transcript while exposing the now-fixed second-start bug.
+Live dictated-utterance accuracy and offline utterance acceptance remain manual.
+
 Attachments are copied without changing the original. PNG/JPEG, PDF, CSV/TSV
 and XLSX have real previews. Unsupported files remain attachable and can be
 opened explicitly as an external copy. PDF pages render with bundled PDF.js;
@@ -38,11 +76,14 @@ raster data and 100,000 spreadsheet cells, with caption fallback warnings.
 
 ## Backups and recovery
 
-Settings provides password and native destination setup, Back up now, restore,
+Settings provides password confirmation and native Box destination setup, first backup/Back up now, restore,
 and daily backup scheduling with launch catch-up. The destination picker
 suggests a detected Box Drive folder. Remembered passwords use Electron
 safeStorage; only encrypted credential bytes are stored locally, outside the
-backup. Setup is completed by the user on their Mac.
+backup. Setup is completed by the user on their Mac. Destination changes reuse the
+saved password; Finder reveal is limited to the configured directory. Settings
+shows availability, progress, last verified local copy, attempt and failure.
+Daily failures are persisted; a successful copy clears the latest failure.
 
 Backups use SQLite's consistent snapshot API, include Trash and referenced
 attachments, and are archived then encrypted with AES-256-GCM and scrypt.
@@ -70,6 +111,9 @@ deletion does not erase older backup or rollback copies. See `RECOVERY.md`.
 | `shared/contracts.ts`, `docs/BACKEND-CONTRACT.md` | Typed API and subsystem agreements |
 | `electron/main.cjs`, `electron/preload.cjs` | Sandboxed bridge, frame/payload validation, native pickers, safeStorage, scheduling and close flush |
 | `electron/backend/worker.cjs` | Dedicated utility process, serial mutation queue, progress/cancellation |
+| `electron/backend/schema.cjs` | Version-specific required columns and palette IDs |
+| `electron/dictation.cjs`, `native/speech/main.swift` | Session-scoped speech helper, permissions, audio and transcript lifecycle |
+| `shared/yield.cjs`, `src/YieldCalculation.tsx` | Shared deterministic calculation and persisted editor card |
 | `electron/backend/store.cjs` | SQLite migrations, repository operations, optimistic revisions, Trash |
 | `electron/backend/backup.cjs` | Snapshot, encryption, archive validation and journalled restoration |
 | `electron/backend/files.cjs`, `parser.cjs` | Managed imports and isolated spreadsheet previews |
@@ -81,15 +125,14 @@ deletion does not erase older backup or rollback copies. See `RECOVERY.md`.
 | `src/appearance.ts`, `src/theme.css`, `src/styles.css` | Preserved appearance and layout |
 | `scripts/package.mjs` | Production dependency packaging, arm64 native rebuild and local workers |
 
-PM owns shared contracts, manifests, integration and release acceptance. Three
-Sol High depth-1 leads reviewed storage/recovery, desktop/workflows and
-files/delivery. Each had up to two Luna Max depth-2 coding workers. Maximum nine
-subagents, primary excluded; depth-2 agents cannot delegate. No separate
-user-owned tasks or commits were created for this implementation.
+The primary agent owns contracts, integration, migrations, packaging and release
+acceptance. Bounded depth-1 agents covered dictation, backups, tables, appearance
+and yield/exports; one depth-2 worker handled table exporters. No commits,
+separate user-owned tasks or public releases were created.
 
 ## Install and validate
 
-Use macOS arm64, a supported Node release, npm, and Apple Command Line Tools.
+Use macOS arm64, a supported Node release, npm, and Apple Command Line Tools with macOS 26 SDK/Swift for native speech compilation.
 The lockfile is authoritative. Native dependencies must match Electron's ABI.
 Initial setup needs network access; local app workflows operate offline.
 
@@ -99,10 +142,12 @@ npm run setup:desktop
 npm run check:dependencies
 npm run test:backend
 npm run check:appearance
+npm run build:speech
 npm run package:mac
 LABMATE_REQUIRE_PACKAGE=1 npm run test:backend
 LABMATE_APP_BINARY="$PWD/out/LabMate-darwin-arm64/LabMate.app/Contents/MacOS/LabMate" npm run check:functional
 LABMATE_APP_BINARY="$PWD/out/LabMate-darwin-arm64/LabMate.app/Contents/MacOS/LabMate" npm run check:ui
+# Use the same LABMATE_APP_BINARY for check:tables, check:yield, check:palettes, check:dictation.
 ```
 
 CommonJS desktop code is explicitly syntax-checked and packaged as source;
@@ -122,7 +167,7 @@ notarization remain separate manual/distribution checks.
 
 ## Deferred controls
 
-Zotero and Google Docs integration, dictation, scientific viewers, public
+Zotero and Google Docs integration, scientific viewers, public
 signing/notarization, Intel packaging and updates remain deferred. Future
 citation associations have a separate storage table but no live picker/API.
 No hosted backend, live cloud sync, multiuser access, electronic signatures or

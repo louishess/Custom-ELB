@@ -1,3 +1,4 @@
+import { buildSpeechHelper } from './build-speech.mjs';
 import { packager } from '@electron/packager';
 import { rebuild } from '@electron/rebuild';
 import { execFileSync } from 'node:child_process';
@@ -17,6 +18,7 @@ if (iconNeedsBuild) {
   }
 }
 
+const speechBundle = buildSpeechHelper();
 const paths = await packager({
   dir: '.',
   name: 'LabMate',
@@ -25,6 +27,8 @@ const paths = await packager({
   icon: iconPath,
   platform: 'darwin',
   arch: 'arm64',
+  extraResource: [speechBundle],
+  extendInfo: { NSMicrophoneUsageDescription: 'LabMate uses the microphone only when you start dictation. Speech is transcribed on this Mac and audio is not saved.' },
   out: 'out',
   overwrite: true,
   // Native bindings must stay outside the archive so macOS can load and sign
@@ -32,7 +36,7 @@ const paths = await packager({
   asar: { unpack: '{**/better-sqlite3/prebuilds/darwin-arm64.node,**/electron/backend/parser.cjs}' },
   asarIntegrityDigest: true,
   prune: true,
-  ignore: [/^\/(src|scripts|tests|artifacts|docs|shared|\.codex|\.git)(\/|$)/, /^\/(AGENTS\.md|README\.md|tsconfig\.json|vite\.config\.ts|index\.html|package-lock\.json)$/],
+  ignore: [/^\/(src|scripts|native|tests|artifacts|docs|\.codex|\.git)(\/|$)/, /^\/(AGENTS\.md|README\.md|tsconfig\.json|vite\.config\.ts|index\.html|package-lock\.json)$/],
   // Rebuild only the packaged copy. The development install remains usable by
   // Node's test runner after packaging.
   afterCopy: [async ({ buildPath, electronVersion, arch }) => {

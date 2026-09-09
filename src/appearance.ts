@@ -65,6 +65,47 @@ const darkPalette: Record<keyof typeof lightPalette, string> = {
 
 type ColorKey = keyof typeof lightPalette;
 
+export const appearancePalettes = [
+  { id: 'sage', label: 'Original Sage' },
+  { id: 'ocean', label: 'Ocean' },
+  { id: 'lavender', label: 'Lavender' },
+  { id: 'terracotta', label: 'Terracotta' },
+  { id: 'rose', label: 'Rose' },
+  { id: 'graphite', label: 'Graphite' },
+] as const;
+export type AppearancePaletteId = typeof appearancePalettes[number]['id'];
+
+// Only workspace colors change with the palette. Notebook identities and
+// tracker states retain their familiar sage, purple and clay colors.
+type PaletteOverrides = Partial<Record<ColorKey, string>>;
+const variants: Record<Exclude<AppearancePaletteId, 'sage'>, { light: PaletteOverrides; dark: PaletteOverrides }> = {
+  ocean: {
+    light: { canvas: '#eaf3f7', surface: '#f6fcff', 'surface-soft': '#edf6fa', 'surface-muted': '#dcebf2', sidebar: '#e0edf4', line: '#c9dfe9', ink: '#253b48', 'ink-secondary': '#506b7b', 'ink-muted': '#526c79', brand: '#235d7c', green: '#256684', 'green-dark': '#1e5573', 'accent-ink': '#215d7a', 'accent-soft': '#d9edf6', spark: '#327fa0' },
+    dark: { canvas: '#1c2933', surface: '#263744', 'surface-soft': '#2a3c49', 'surface-muted': '#334958', sidebar: '#21313e', line: '#435d6d', ink: '#e4eff7', 'ink-secondary': '#b5c9d7', 'ink-muted': '#a8c1d0', brand: '#326d8b', green: '#326d8b', 'green-dark': '#2b6180', 'accent-ink': '#a8d4ed', 'accent-soft': '#304e60', spark: '#8ecbe5' },
+  },
+  lavender: {
+    light: { canvas: '#f2eef8', surface: '#fcf9ff', 'surface-soft': '#f5f0fb', 'surface-muted': '#eae2f2', sidebar: '#ebe5f4', line: '#dbd0e9', ink: '#393145', 'ink-secondary': '#6a5e7b', 'ink-muted': '#6b607a', brand: '#685085', green: '#6b528a', 'green-dark': '#584372', 'accent-ink': '#644b85', 'accent-soft': '#e9dff4', spark: '#9570b2' },
+    dark: { canvas: '#282331', surface: '#352e40', 'surface-soft': '#3a3246', 'surface-muted': '#493e56', sidebar: '#2e2738', line: '#5a4b69', ink: '#eee7f6', 'ink-secondary': '#c8bdd7', 'ink-muted': '#baadcd', brand: '#735b91', green: '#735b91', 'green-dark': '#624d7d', 'accent-ink': '#d5b8f3', 'accent-soft': '#503e62', spark: '#d5a9ef' },
+  },
+  terracotta: {
+    light: { canvas: '#f8eee6', surface: '#fff8f1', 'surface-soft': '#fcf1e9', 'surface-muted': '#f0e1d6', sidebar: '#f2e4d8', line: '#e8d5c5', ink: '#49372e', 'ink-secondary': '#795e4f', 'ink-muted': '#775f53', brand: '#914e36', green: '#965238', 'green-dark': '#7e422d', 'accent-ink': '#884a32', 'accent-soft': '#f4dfd1', spark: '#ac6240' },
+    dark: { canvas: '#302620', surface: '#40312a', 'surface-soft': '#46362e', 'surface-muted': '#564237', sidebar: '#382b24', line: '#685044', ink: '#f5e9dd', 'ink-secondary': '#d3bfb0', 'ink-muted': '#c7b09f', brand: '#965b42', green: '#965b42', 'green-dark': '#854d36', 'accent-ink': '#f0ba98', 'accent-soft': '#5f4333', spark: '#f0b085' },
+  },
+  rose: {
+    light: { canvas: '#f8edf0', surface: '#fff7fa', 'surface-soft': '#fbedf2', 'surface-muted': '#f0dfe6', sidebar: '#f2e1e8', line: '#e8d1dc', ink: '#49313c', 'ink-secondary': '#785967', 'ink-muted': '#755b67', brand: '#914865', green: '#964d6b', 'green-dark': '#803e59', 'accent-ink': '#8b425f', 'accent-soft': '#f3dce6', spark: '#ad6384' },
+    dark: { canvas: '#30232b', surface: '#402e39', 'surface-soft': '#46323f', 'surface-muted': '#56404e', sidebar: '#372833', line: '#684c5c', ink: '#f7e7ef', 'ink-secondary': '#d5b9c8', 'ink-muted': '#c9aabc', brand: '#97566f', green: '#97566f', 'green-dark': '#86465f', 'accent-ink': '#f0b3cf', 'accent-soft': '#613e51', spark: '#efa6c7' },
+  },
+  graphite: {
+    light: { canvas: '#f0f1f2', surface: '#fbfcfd', 'surface-soft': '#f4f5f6', 'surface-muted': '#e3e6e9', sidebar: '#e7e9ec', line: '#d4d9de', ink: '#303740', 'ink-secondary': '#5e6670', 'ink-muted': '#606872', brand: '#505e70', green: '#556374', 'green-dark': '#455264', 'accent-ink': '#4d5c70', 'accent-soft': '#e0e6ed', spark: '#72869d' },
+    dark: { canvas: '#24282e', surface: '#30363e', 'surface-soft': '#343b44', 'surface-muted': '#424b56', sidebar: '#292f37', line: '#525e6d', ink: '#e9edf3', 'ink-secondary': '#bdc6d3', 'ink-muted': '#afbcca', brand: '#5a687b', green: '#5a687b', 'green-dark': '#4b596d', 'accent-ink': '#bccfe9', 'accent-soft': '#425065', spark: '#aec7e3' },
+  },
+};
+
+function endpoints(id: AppearancePaletteId) {
+  const variant = id === 'sage' ? undefined : variants[id];
+  return { light: { ...lightPalette, ...variant?.light }, dark: { ...darkPalette, ...variant?.dark } };
+}
+
 function channels(color: string): number[] {
   return [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16) / 255);
 }
@@ -110,22 +151,23 @@ function readable(seed: string, backgrounds: string[], darkText: boolean): strin
   return extreme;
 }
 
-export function appearancePalette(value: number): Record<ColorKey, string> {
+export function appearancePalette(value: number, paletteId: AppearancePaletteId = 'sage'): Record<ColorKey, string> {
   const position = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0)) / 100;
-  const palette = Object.fromEntries((Object.keys(lightPalette) as ColorKey[]).map(key => [key, blend(lightPalette[key], darkPalette[key], position)])) as Record<ColorKey, string>;
+  const { light, dark } = endpoints(paletteId);
+  const palette = Object.fromEntries((Object.keys(lightPalette) as ColorKey[]).map(key => [key, blend(light[key], dark[key], position)])) as Record<ColorKey, string>;
 
   // Backgrounds cross the readable-text threshold together, without jumping
   // between presets. Hue is retained while luminance follows a continuous path.
   // At the midpoint, either black or white text has at least 4.5:1 contrast.
   for (const key of surfaces) {
     const target = position <= .5
-      ? luminance(lightPalette[key]) + (.179 - luminance(lightPalette[key])) * position * 2
-      : .179 + (luminance(darkPalette[key]) - .179) * (position - .5) * 2;
+      ? luminance(light[key]) + (.179 - luminance(light[key])) * position * 2
+      : .179 + (luminance(dark[key]) - .179) * (position - .5) * 2;
     palette[key] = atLuminance(palette[key], target);
   }
 
   const darkText = position <= .5;
-  const foregrounds = darkText ? lightPalette : darkPalette;
+  const foregrounds = darkText ? light : dark;
   const normalBackgrounds = commonSurfaces.map(key => palette[key]);
   for (const key of ['ink', 'ink-secondary', 'ink-muted', 'accent-ink'] as const) {
     palette[key] = readable(foregrounds[key], normalBackgrounds, darkText);
@@ -139,11 +181,15 @@ export function appearancePalette(value: number): Record<ColorKey, string> {
   return palette;
 }
 
-export function applyAppearance(value: number): void {
+export function applyAppearance(value: number, paletteId: AppearancePaletteId = 'sage'): void {
   const position = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
   const root = document.documentElement;
-  for (const [key, color] of Object.entries(appearancePalette(position))) root.style.setProperty(`--${key}`, color);
+  for (const [key, color] of Object.entries(appearancePalette(position, paletteId))) root.style.setProperty(`--${key}`, color);
+  for (const [key, amount] of [['light', 0], ['middle', 50], ['dark', 100]] as const) {
+    root.style.setProperty(`--appearance-${key}`, appearancePalette(amount, paletteId).canvas);
+  }
   root.dataset.appearance = String(position);
+  root.dataset.palette = paletteId;
   // Native dropdowns and other OS controls expose only a light/dark scheme.
   root.style.colorScheme = position <= 50 ? 'light' : 'dark';
 }

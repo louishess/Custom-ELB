@@ -61,7 +61,7 @@ const run = (id: string, notebookId: string, experimentId: string, label: string
  * real library snapshot.
  */
 export const demoSnapshot: LibrarySnapshot = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   notebooks: [
     { id: 'demo-catalysis', name: 'Catalysis & synthesis', description: 'Reaction development, catalyst screening, and repeat experiments.', discipline: 'Organic chemistry', color: 'sage', revision: 1, createdAt: times[6], updatedAt: times[0], trashedAt: null },
     { id: 'demo-materials', name: 'Functional materials', description: 'Thin films, surface treatments, and material characterization.', discipline: 'Materials science', color: 'blue', revision: 1, createdAt: times[6], updatedAt: times[1], trashedAt: null },
@@ -90,7 +90,7 @@ export const demoSnapshot: LibrarySnapshot = {
     { id: 'demo-films', notebookId: 'demo-materials', name: 'Film reproducibility', description: 'Reference preparation followed by a repeat run.', runIds: ['demo-mat-3-1', 'demo-mat-3-2'], revision: 1 },
     { id: 'demo-calibration', notebookId: 'demo-analytical', name: 'Method development', description: 'The initial calibration entry in the method sequence.', runIds: ['demo-ana-10-1'], revision: 1 },
   ],
-  preferences: { appearance: 0, layout: 'continuous', directoryView: 'grid', sort: 'newest' },
+  preferences: { appearance: 0, palette: 'sage', layout: 'continuous', directoryView: 'grid', sort: 'newest' },
 };
 
 export function cloneDemoSnapshot(): LibrarySnapshot {

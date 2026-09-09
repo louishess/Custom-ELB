@@ -16,6 +16,7 @@ try {
 
 const INVOKE_CHANNEL = 'labmate:invoke';
 const PROGRESS_CHANNEL = 'labmate:progress';
+const DICTATION_CHANNEL = 'labmate:dictation';
 const CLOSE_LISTENER_CHANNEL = 'labmate:close-listener-registered';
 const CLOSE_REQUEST_CHANNEL = 'labmate:before-close';
 const CLOSE_RESULT_CHANNEL = 'labmate:before-close-result';
@@ -28,8 +29,9 @@ const NAMESPACE_METHODS = Object.freeze({
   trash: Object.freeze(['move', 'restore', 'purge']),
   attachments: Object.freeze(['import', 'preview', 'open', 'update', 'remove']),
   exports: Object.freeze(['write']),
-  backups: Object.freeze(['status', 'configure', 'run', 'restore']),
+  backups: Object.freeze(['status', 'configure', 'changeDestination', 'revealDestination', 'run', 'restore']),
   jobs: Object.freeze(['cancel']),
+  dictation: Object.freeze(['capabilities', 'prepare', 'start', 'stop', 'cancel']),
 });
 
 const ALLOWED_METHODS = new Set(
@@ -69,6 +71,7 @@ function exposeBridge() {
 
   const progressListeners = new Set();
   const closeListeners = new Set();
+  const dictationListeners = new Set();
   let closeListenerRegistered = false;
 
   ipcRenderer.on(PROGRESS_CHANNEL, (_event, value) => {
@@ -79,6 +82,15 @@ function exposeBridge() {
     }
   });
 
+  ipcRenderer.on(DICTATION_CHANNEL, (_event, value) => {
+    if (!value || typeof value.sessionId !== 'string' || !['preparing', 'ready', 'recording', 'stopped', 'cancelled', 'error'].includes(value.state)) return;
+    const event = {sessionId: value.sessionId, state: value.state};
+    if (typeof value.transcript === 'string') event.transcript = value.transcript;
+    if (typeof value.final === 'boolean') event.final = value.final;
+    if (typeof value.message === 'string') event.message = value.message;
+    Object.freeze(event);
+    for (const listener of [...dictationListeners]) { try { listener(event); } catch { /* isolated listener */ } }
+  });
   ipcRenderer.on(CLOSE_REQUEST_CHANNEL, (_event, requestId) => {
     if (typeof requestId !== 'string' || requestId.length === 0 || requestId.length > 128) return;
     void (async () => {
@@ -113,6 +125,11 @@ function exposeBridge() {
     return () => { progressListeners.delete(listener); };
   };
 
+  api.onDictation = listener => {
+    if (typeof listener !== 'function') return () => {};
+    dictationListeners.add(listener);
+    return () => dictationListeners.delete(listener);
+  };
   api.onBeforeClose = (listener) => {
     if (typeof listener !== 'function') return () => {};
     closeListeners.add(listener);
