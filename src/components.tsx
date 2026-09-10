@@ -13,7 +13,8 @@ import TextAlign from '@tiptap/extension-text-align';
 import type { Attachment, Entry, EntryLayout, SectionDocuments, SectionId } from './types';
 import { formatBytes, sections } from './fixtures';
 import { cloneDocuments } from './workflows';
-import { YieldCalculation, DEFAULT_YIELD_INPUTS } from './YieldCalculation';
+import { YieldCalculation } from './YieldCalculation';
+import { MaterialYieldControls, YieldMaterial } from './MaterialYield';
 import DictationDialog from './DictationDialog';
 import { TableControls } from './TableControls';
 
@@ -61,9 +62,9 @@ export function AttachmentCard({ attachment, onOpen }: { attachment: Attachment;
   </button>;
 }
 
-type ToolbarProps = { editor?: Editor | null; disabled?: boolean; onDictate?: () => void };
+type ToolbarProps = { editor?: Editor | null; disabled?: boolean; onDictate?: () => void; yieldControls?: ReactNode };
 
-export function EditorToolbar({ editor, disabled = false, onDictate }: ToolbarProps) {
+export function EditorToolbar({ editor, disabled = false, onDictate, yieldControls }: ToolbarProps) {
   const enabled = Boolean(editor) && !disabled;
   const [headingLevel, setHeadingLevel] = useState('paragraph');
   const [linkOpen, setLinkOpen] = useState(false);
@@ -94,6 +95,7 @@ export function EditorToolbar({ editor, disabled = false, onDictate }: ToolbarPr
     {button('Italic', <Italic size={16} />, () => editor?.chain().focus().toggleItalic().run(), Boolean(editor?.isActive('italic')))}
     {button('Underline', <Underline size={16} />, () => editor?.chain().focus().toggleUnderline().run(), Boolean(editor?.isActive('underline')))}
     {button('Highlight', <Highlighter size={16} />, () => editor?.chain().focus().toggleHighlight().run(), Boolean(editor?.isActive('highlight')))}
+    {yieldControls}
     <span className="toolbar-divider" />
     {button('Align left', <AlignLeft size={16} />, () => editor?.chain().focus().setTextAlign('left').run(), Boolean(editor?.isActive({ textAlign: 'left' })))}
     {button('Align center', <AlignCenter size={16} />, () => editor?.chain().focus().setTextAlign('center').run(), Boolean(editor?.isActive({ textAlign: 'center' })))}
@@ -153,6 +155,7 @@ const extensions = [
   StarterKit.configure({ link: { openOnClick: false, autolink: false, linkOnPaste: false } }),
   Highlight,
   YieldCalculation,
+  YieldMaterial,
   SubscriptExtension,
   SuperscriptExtension,
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
@@ -233,7 +236,7 @@ export function RichEntryEditor({ run, attachments = run.attachments ?? [], docu
     onDocumentsChange(next);
   };
   return <>
-    <EditorToolbar editor={editors[activeSection]} disabled={readOnly} onDictate={beginDictation} />
+    <EditorToolbar editor={editors[activeSection]} disabled={readOnly} onDictate={beginDictation} yieldControls={<MaterialYieldControls key={run.id} editors={editors} editor={editors[activeSection]} disabled={readOnly} documents={documents} getDocuments={() => documentsRef.current} runId={run.id} />} />
     {dictation && <DictationDialog sessionId={dictation.sessionId} originLabel={`${run.title} · ${sections.find(section => section.id === dictation.section)?.name}`} onCancel={() => setDictation(null)} onInsert={text => {
       if (runRef.current !== dictation.runId || dictation.editor.isDestroyed || dictation.editor.state.doc !== dictation.document) {
         throw new Error('The destination changed. Copy your transcript before closing and reopen dictation in the current section.');
@@ -247,7 +250,6 @@ export function RichEntryEditor({ run, attachments = run.attachments ?? [], docu
     <div className="entry-sections">
       {sections.map((section, index) => <section key={section.id} id={`section-${section.id}`} className="entry-section" role={layout === 'tabs' ? 'tabpanel' : undefined} aria-labelledby={layout === 'tabs' ? `tab-${section.id}` : `heading-${section.id}`} tabIndex={-1} hidden={layout === 'tabs' && activeSection !== section.id}>
         <div className="section-heading"><h2 id={`heading-${section.id}`}><span className="section-number">0{index + 1}</span>{section.name}</h2>
-          {section.id === 'data' && <button className="button button-small" type="button" disabled={readOnly} onClick={() => { onFocusSection?.('data'); if (editors.data) editors.data.view.dispatch(closeHistory(editors.data.state.tr)); editors.data?.chain().focus().insertContent([{type: 'yieldCalculation', attrs: {...DEFAULT_YIELD_INPUTS}}, {type: 'paragraph'}]).run(); }}><Sigma size={14} />Add yield calculation</button>}
           {section.id === 'data' && <button className="button button-small" type="button" onClick={onAddAttachments} disabled={readOnly}><Plus size={14} /> Add files{readOnly && <Planned>Demo</Planned>}</button>}
         </div>
         <RichSection id={section.id} document={documents[section.id]} onChange={document => handleChange(section.id, document)} onEditor={editor => handleEditor(section.id, editor)} onFocus={onFocusSection ?? (() => undefined)} readOnly={readOnly} resetToken={resetToken} />

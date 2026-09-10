@@ -8,7 +8,7 @@ export interface ExperimentRecord { id: string; notebookId: string; label: strin
 export interface RunRecord { id: string; notebookId: string; experimentId: string; label: string; experimentNumber: number; runNumber: number; title: string; date: string; author: string; status: Status; documents: SectionDocuments; revision: number; createdAt: string; updatedAt: string; trashedAt: string | null }
 export interface AttachmentRecord { id: string; runId: string; name: string; mime: string; size: number; hash: string; caption: string; kind: 'image' | 'pdf' | 'spreadsheet' | 'scientific' | 'file'; createdAt: string }
 export interface SchemeRecord { id: string; notebookId: string; name: string; description: string; runIds: string[]; revision: number }
-export type PaletteId = 'sage' | 'ocean' | 'lavender' | 'terracotta' | 'rose' | 'graphite';
+export type PaletteId = 'sage' | 'ocean' | 'lavender' | 'terracotta' | 'rose' | 'graphite' | 'midnight';
 export interface Preferences { appearance: number; palette: PaletteId; layout: 'continuous' | 'tabs'; directoryView: 'grid' | 'list'; sort: string }
 export interface LibrarySnapshot { schemaVersion: number; notebooks: NotebookRecord[]; experiments: ExperimentRecord[]; runs: RunRecord[]; attachments: AttachmentRecord[]; schemes: SchemeRecord[]; preferences: Preferences }
 export interface BackupStatus { configured: boolean; destinationLabel?: string; destinationAvailable?: boolean; lastBackupAt?: string; lastAttemptAt?: string; lastFailure?: {at: string; message: string}; progress?: JobEvent; message?: string; running?: boolean }
@@ -27,6 +27,7 @@ export interface Operations {
  'records.repeatRun': Op<{runId: string; date: string}>;
  'records.updateRun': Op<{id: string; expectedRevision: number; changes: Partial<Pick<RunRecord, 'title'|'date'|'author'|'status'>>}>;
  'documents.save': Op<{runId: string; expectedRevision: number; documents: SectionDocuments}>;
+ 'yield.copy': Op<{starting: {text: string; manual?: import('./material-yield.cjs').ManualMaterial}; product: {text: string; manual?: import('./material-yield.cjs').ManualMaterial}}, {copied: boolean; summary: string}>;
  'schemes.create': Op<{notebookId: string; name: string; description: string; runIds?: string[]}>;
  'schemes.update': Op<{id: string; expectedRevision: number; name?: string; description?: string; runIds?: string[]}>;
  'schemes.remove': Op<{id: string; expectedRevision: number}>;
@@ -58,7 +59,7 @@ type OperationFunction<K extends keyof Operations> = Operations[K]['input'] exte
  ? (input?: undefined) => Promise<Result<Operations[K]['output']>>
  : (input: Operations[K]['input']) => Promise<Result<Operations[K]['output']>>;
 type Namespace<N extends string> = { [K in keyof Operations as K extends `${N}.${infer M}` ? M : never]: OperationFunction<K> };
-export type LabmateAPI = { [N in 'records'|'documents'|'schemes'|'preferences'|'trash'|'attachments'|'exports'|'backups'|'jobs'|'dictation']: Namespace<N> } & {
+export type LabmateAPI = { [N in 'records'|'documents'|'yield'|'schemes'|'preferences'|'trash'|'attachments'|'exports'|'backups'|'jobs'|'dictation']: Namespace<N> } & {
  onDictation: (listener: (event: DictationEvent) => void) => () => void;
  onProgress: (listener: (event: JobEvent) => void) => () => void;
  onBeforeClose: (listener: () => Promise<boolean>) => () => void;

@@ -14,8 +14,9 @@ try {
   betterSqliteLoadError = error;
 }
 
-const { SCHEMA_VERSION, PALETTES, columnsForVersion } = require('./schema.cjs');
+const { SCHEMA_VERSION, PALETTES, columnsForVersion, palettesForVersion } = require('./schema.cjs');
 const { validateYieldInputs } = require('../../shared/yield.cjs');
+const { validateManualMaterial } = require('../../shared/material-yield.cjs');
 const DATABASE_NAME = 'library.sqlite';
 const SECTION_IDS = ['information', 'method', 'notes', 'data'];
 const COLORS = new Set(['sage', 'blue', 'clay']);
@@ -212,6 +213,16 @@ function validateDocNode(node, location, seen) {
       if (Object.prototype.hasOwnProperty.call(mark, 'attrs') && !isPlainObject(mark.attrs)) {
         throw new StoreError('VALIDATION', `${location}.marks[${index}].attrs must be an object.`);
       }
+      if (mark.type === 'yieldMaterial' && (
+        !isPlainObject(mark.attrs)
+        || Object.keys(mark.attrs).some(key => !['role', 'id', 'manual'].includes(key))
+        || !['starting', 'product'].includes(mark.attrs.role)
+        || typeof mark.attrs.id !== 'string'
+        || !/^[A-Za-z0-9_-]{1,128}$/.test(mark.attrs.id)
+        || (mark.attrs.manual != null && !validateManualMaterial(mark.attrs.manual))
+      )) {
+        throw new StoreError('VALIDATION', 'Yield material marks require a starting/product role and a valid identifier.');
+      }
       if (Object.prototype.hasOwnProperty.call(mark, 'attrs')) validateJsonValue(mark.attrs, `${location}.marks[${index}].attrs`);
     });
   }
@@ -236,6 +247,21 @@ function validateDocument(value, field = 'document') {
     throw new StoreError('VALIDATION', `${field} must be JSON serializable.`, error);
   }
   return cloneJson(value);
+}
+
+// Repeated prose remains useful, but measured starting/product selections belong
+// to the source run. Keep every other mark and node intact in the copied text.
+function copyWithoutYieldMaterials(document) {
+  const copy = cloneJson(document);
+  const visit = node => {
+    if (Array.isArray(node.marks) && node.marks.some(mark => mark.type === 'yieldMaterial')) {
+      node.marks = node.marks.filter(mark => mark.type !== 'yieldMaterial');
+      if (!node.marks.length) delete node.marks;
+    }
+    if (Array.isArray(node.content)) node.content.forEach(visit);
+  };
+  visit(copy);
+  return copy;
 }
 
 function validateSectionDocuments(value, field = 'documents') {
@@ -399,7 +425,7 @@ const SCHEMA_SQL = [
     layout TEXT NOT NULL CHECK (layout IN ('continuous', 'tabs')),
     directory_view TEXT NOT NULL CHECK (directory_view IN ('grid', 'list')),
     sort TEXT NOT NULL,
-    palette TEXT NOT NULL DEFAULT 'sage' CHECK (palette IN ('sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite'))
+    palette TEXT NOT NULL DEFAULT 'sage' CHECK (palette IN ('sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite', 'midnight'))
   )`,
 ];
 
@@ -481,10 +507,17 @@ class LibraryStore {
           database.pragma(`user_version = ${SCHEMA_VERSION}`);
         });
         migrate();
-      } else if (version === 1) {
+      } else if (version === 1 || version === 2) {
         database.transaction(() => {
-          this._verifySchema(database, 1);
-          database.exec("ALTER TABLE preferences ADD COLUMN palette TEXT NOT NULL DEFAULT 'sage' CHECK (palette IN ('sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite'))");
+          this._verifySchema(database, version);
+          // SQLite cannot alter a CHECK constraint. Rebuild only preferences,
+          // within the same transaction as the version update, preserving values.
+          database.exec('ALTER TABLE preferences RENAME TO preferences_before_v3');
+          database.exec(SCHEMA_SQL[SCHEMA_SQL.length - 1]);
+          database.exec(`INSERT INTO preferences (id, appearance, layout, directory_view, sort, palette)
+            SELECT id, appearance, layout, directory_view, sort, ${version === 1 ? "'sage'" : 'palette'}
+            FROM preferences_before_v3`);
+          database.exec('DROP TABLE preferences_before_v3');
           this._verifySchema(database);
           database.pragma(`user_version = ${SCHEMA_VERSION}`);
         })();
@@ -512,6 +545,12 @@ class LibraryStore {
     const preferences = database.prepare('SELECT COUNT(*) AS count FROM preferences WHERE id = 1').get();
     if (Number(preferences.count) !== 1) {
       throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
+    }
+    if (version >= 2) {
+      const palette = database.prepare('SELECT palette FROM preferences WHERE id = 1').get().palette;
+      if (!palettesForVersion(version).includes(palette)) {
+        throw new StoreError('CORRUPT_BACKUP', 'Library appearance palette is unsupported for its schema.');
+      }
     }
     const foreignKeys = database.prepare('PRAGMA foreign_key_check').all();
     if (foreignKeys.length > 0) {
@@ -907,8 +946,8 @@ class LibraryStore {
     const runNumber = this._nextNumber(`run:${experiment.id}`, 'runs', 'run_number', 'experiment_id', experiment.id);
     const sourceDocuments = this._readDocuments(source.id);
     const documents = {
-      information: cloneJson(sourceDocuments.information),
-      method: cloneJson(sourceDocuments.method),
+      information: copyWithoutYieldMaterials(sourceDocuments.information),
+      method: copyWithoutYieldMaterials(sourceDocuments.method),
       notes: makeEmptyDocument(),
       data: makeEmptyDocument(),
     };

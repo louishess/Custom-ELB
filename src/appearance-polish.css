@@ -1,4 +1,5 @@
 .palette-picker { min-width: 0; padding: 0; margin: 0 0 22px; border: 0; }
+html[data-palette="midnight"] .directory-main { background: radial-gradient(ellipse at 98% 3%, color-mix(in srgb, var(--accent-soft) 35%, transparent), transparent 44%), var(--canvas); }
 .palette-picker legend { color: var(--ink); font-size: 13px; font-weight: 550; }
 .palette-description { margin: 7px 0 13px; font-size: 11px; line-height: 1.7; color: var(--ink-secondary); }
 .palette-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

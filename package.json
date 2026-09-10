@@ -1,7 +1,7 @@
 {
   "name": "labmate",
   "productName": "LabMate",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
   "description": "A Mac-first local electronic lab notebook with encrypted backups",
@@ -24,7 +24,8 @@
     "check:tables": "node scripts/check-tables.mjs",
     "check:yield": "node scripts/check-yield.mjs",
     "check:palettes": "node scripts/check-palettes.mjs",
-    "check:dictation": "node scripts/check-dictation.mjs"
+    "check:dictation": "node scripts/check-dictation.mjs",
+    "check:material-yield": "node scripts/check-material-yield.mjs"
   },
   "dependencies": {
     "@tiptap/extension-highlight": "3.31.3",

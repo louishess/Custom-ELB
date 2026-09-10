@@ -9,7 +9,7 @@ import { _electron as electron } from 'playwright';
 const root = await mkdtemp(path.join(os.tmpdir(), 'labmate-palettes-'));
 const output = path.resolve('artifacts/palettes');
 await mkdir(output, { recursive: true });
-const palettes = [['sage', 'Original Sage'], ['ocean', 'Ocean'], ['lavender', 'Lavender'], ['terracotta', 'Terracotta'], ['rose', 'Rose'], ['graphite', 'Graphite']];
+const palettes = [['sage', 'Original Sage'], ['ocean', 'Ocean'], ['lavender', 'Lavender'], ['terracotta', 'Terracotta'], ['rose', 'Rose'], ['graphite', 'Graphite'], ['midnight', 'Midnight Purple']];
 const checks = [], errors = [], externalRequests = [], screenshots = [];
 let application, page;
 async function launch() {
@@ -115,6 +115,7 @@ try {
       assert.equal(await page.getByRole('radio', { name: label, exact: true }).isChecked(), true);
       for (const value of [0, 50, 100]) {
         await brightness(value, id);
+        if (id === 'midnight' && value === 100) assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim()), '#000000');
         await checkLayout();
         await page.locator('.palette-picker').scrollIntoViewIfNeeded();
         await shot(`${id}-${value}-settings`);
@@ -136,13 +137,15 @@ try {
     await shot('rose-keyboard-focus');
     await page.keyboard.press('ArrowRight');
     await persisted('graphite');
+    await page.keyboard.press('ArrowRight');
+    await persisted('midnight');
   });
   await check('Narrow supported window keeps palette names and Settings controls usable', async () => {
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 740));
-    await brightness(50, 'graphite');
+    await brightness(100, 'midnight');
     await checkLayout();
     await page.locator('.palette-picker').scrollIntoViewIfNeeded();
-    await shot('graphite-50-narrow');
+    await shot('midnight-100-narrow');
   });
   await check('Reduced motion suppresses palette transitions and notebook hover movement', async () => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -152,15 +155,15 @@ try {
     const style = await page.locator('.notebook-card').first().evaluate(element => ({ transition: getComputedStyle(element).transitionDuration, transform: getComputedStyle(element).transform }));
     assert.equal(style.transition, '0s');
     assert.equal(style.transform, 'none');
-    await shot('graphite-50-reduced-motion');
+    await shot('midnight-100-reduced-motion');
   });
   await check('Full application restart retains palette and brightness without renderer errors', async () => {
     await application.close(); application = undefined;
     await launch();
-    await persisted('graphite', 50);
+    await persisted('midnight', 100);
     assert.equal((await api('records.snapshot')).notebooks.length, 3);
     await openSettings();
-    assert.equal(await page.getByRole('radio', { name: 'Graphite', exact: true }).isChecked(), true);
+    assert.equal(await page.getByRole('radio', { name: 'Midnight Purple', exact: true }).isChecked(), true);
     assert.deepEqual(errors, []);
     assert.deepEqual(externalRequests, []);
   });

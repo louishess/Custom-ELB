@@ -27,6 +27,7 @@ const {
   ipcMain,
   dialog,
   shell,
+  clipboard,
   safeStorage,
   utilityProcess,
 } = electron;
@@ -38,6 +39,7 @@ try { workerContract = require('./backend/worker.cjs'); } catch { /* source-only
 // rather than silently weakening validation at the renderer boundary.
 const z = require('zod');
 const { createDictationService, validateSession } = require('./dictation.cjs');
+const { calculateMarkedYield, validateManualMaterial } = require('../shared/material-yield.cjs');
 
 const INVOKE_CHANNEL = 'labmate:invoke';
 const PROGRESS_CHANNEL = 'labmate:progress';
@@ -55,6 +57,7 @@ const PUBLIC_METHODS = Object.freeze(new Set([
   'records.repeatRun',
   'records.updateRun',
   'documents.save',
+  'yield.copy',
   'schemes.create',
   'schemes.update',
   'schemes.remove',
@@ -178,6 +181,11 @@ function isSafeJobId(value) {
 
 function publicPayloadError(method, payload) {
   if (!PUBLIC_METHODS.has(method)) return 'Unknown desktop method';
+  if (method === 'yield.copy') return isPlainObject(payload) && Object.keys(payload).length === 2
+    && ['starting', 'product'].every(key => isPlainObject(payload[key]) && Object.keys(payload[key]).every(field => ['text','manual'].includes(field))
+      && typeof payload[key].text === 'string' && payload[key].text.length > 0 && payload[key].text.length <= 10000
+      && (payload[key].manual === undefined || validateManualMaterial(payload[key].manual)))
+    ? null : 'Copy Yield requires two marked material descriptions.';
   if (method === 'attachments.open') {
     return isPlainObject(payload) && Object.keys(payload).length === 1
       && typeof payload.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.id)
@@ -749,6 +757,7 @@ function createBridgeRuntime({
   BrowserWindowApi = BrowserWindow,
   dialogApi = dialog,
   shellApi = shell,
+  clipboardApi = clipboard,
   safeStorageApi = safeStorage,
   utilityProcessApi = utilityProcess,
   fsApi = fs,
@@ -1102,6 +1111,14 @@ function createBridgeRuntime({
       const window = getWindowForEvent(event, BrowserWindowApi);
       if (method.startsWith('dictation.')) return await invokeDictation(event, method, payload);
       switch (method) {
+        case 'yield.copy': {
+          const documents = Object.fromEntries(['starting', 'product'].map(role => [role, {type:'doc', content:[{type:'paragraph', content:[{type:'text', text:payload[role].text, marks:[{type:'yieldMaterial', attrs:{role,id:role,...(payload[role].manual ? {manual:payload[role].manual} : {})}}]}]}]}]));
+          const result = calculateMarkedYield(documents);
+          if (result.status !== 'valid') return resultError('VALIDATION', result.message);
+          if (!clipboardApi || typeof clipboardApi.writeText !== 'function') return unavailableResult('The clipboard is unavailable.');
+          clipboardApi.writeText(result.summary);
+          return {ok:true, value:{copied:true, summary:result.summary}};
+        }
         case 'backups.status': return status();
         case 'backups.configure': return configureBackups(payload, window);
         case 'backups.changeDestination': return configureBackups(undefined, window, true);

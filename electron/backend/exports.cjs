@@ -257,7 +257,10 @@ function normalizeDocNode(node, state, depth = 0) {
   const rawType = safeText(node.type || 'paragraph');
   // A calculation is an editable input node in the library. Export derived,
   // readable paragraphs through the same writers used for ordinary prose.
-  if (rawType === 'yieldCalculation') return { type: 'doc', content: yieldSummary(node.attrs).map(text => ({ type: 'paragraph', content: [{ type: 'text', text: safeText(text) }] })) };
+  if (rawType === 'yieldCalculation') {
+    state.lastMaterialKey = null;
+    return { type: 'doc', content: yieldSummary(node.attrs).map(text => ({ type: 'paragraph', content: [{ type: 'text', text: safeText(text) }] })) };
+  }
   const knownTypes = new Set([
     'doc', 'paragraph', 'heading', 'blockquote', 'bullet_list', 'ordered_list', 'list_item',
     'code_block', 'horizontal_rule', 'table', 'table_row', 'table_cell', 'table_header',
@@ -268,7 +271,17 @@ function normalizeDocNode(node, state, depth = 0) {
   if (type === 'unsupported') state.losses.add(`Unsupported rich-text node “${rawType || 'unknown'}” was flattened.`);
   const normalized = { type };
 
+  // Material roles are meaningful without an interactive editor. Emit a role
+  // label once for a contiguous selection, even when bold/italic split its text.
+  const material = (Array.isArray(node.marks) ? node.marks : []).find(mark => mark?.type === 'yieldMaterial'
+    && ['starting', 'product'].includes(mark.attrs?.role)
+    && typeof mark.attrs?.id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(mark.attrs.id));
+  const materialKey = type === 'text' && material ? `${material.attrs.role}:${material.attrs.id}` : null;
+  const beginsMaterial = materialKey && materialKey !== state.lastMaterialKey;
+  state.lastMaterialKey = materialKey;
+
   if (node.text !== undefined) normalized.text = safeText(node.text);
+  if (beginsMaterial) normalized.text = `[${material.attrs.role === 'starting' ? 'Starting material' : 'Product'}] ${normalized.text || ''}`;
   const attrs = {};
   if (type === 'heading') attrs.level = clampInteger(node.attrs?.level, 1, 6, 2);
   if (type === 'ordered_list') attrs.order = clampInteger(node.attrs?.order, 1, 999999, 1);
@@ -293,12 +306,22 @@ function normalizeDocNode(node, state, depth = 0) {
   if (Array.isArray(node.marks) && node.marks.length) {
     normalized.marks = node.marks.map(mark => {
       const markType = safeText(mark?.type);
-      const allowed = new Set(['bold', 'italic', 'underline', 'strike', 'code', 'superscript', 'subscript', 'link', 'highlight']);
+      const allowed = new Set(['bold', 'italic', 'underline', 'strike', 'code', 'superscript', 'subscript', 'link', 'highlight', 'yieldMaterial']);
       if (!allowed.has(markType)) {
         state.losses.add(`Unsupported text mark “${markType || 'unknown'}” was flattened.`);
         return null;
       }
       const markOut = { type: markType };
+      if (markType === 'yieldMaterial') {
+        if (mark !== material) {
+          state.losses.add('Invalid yield material marks were flattened.');
+          return null;
+        }
+        return { type: 'highlight', attrs: {
+          color: mark.attrs.role === 'starting' ? '#d5efd8' : '#d6e6ff',
+          materialRole: mark.attrs.role,
+        } };
+      }
       if (markType === 'link') {
         const href = sanitizeHref(mark?.attrs?.href);
         if (href) markOut.attrs = { href };
@@ -308,6 +331,7 @@ function normalizeDocNode(node, state, depth = 0) {
         }
       }
       if (markType === 'highlight') {
+        if (material) return null; // Role colors take precedence over ordinary highlighting.
         const color = sanitizeHighlightColor(mark?.attrs?.color);
         if (color) markOut.attrs = { color };
       }
@@ -869,7 +893,8 @@ function renderHtmlInline(node) {
       case 'subscript': text = `<sub>${text}</sub>`; break;
       case 'highlight': {
         const color = sanitizeHighlightColor(mark.attrs?.color);
-        text = color ? `<mark style="background-color:${escapeHtml(color)}">${text}</mark>` : `<mark>${text}</mark>`;
+        const title = mark.attrs?.materialRole === 'starting' ? ' title="Starting material"' : mark.attrs?.materialRole === 'product' ? ' title="Product"' : '';
+        text = color ? `<mark${title} style="background-color:${escapeHtml(color)}">${text}</mark>` : `<mark${title}>${text}</mark>`;
         break;
       }
       case 'link': if (mark.attrs?.href) text = `<a href="${escapeHtml(mark.attrs.href)}">${text}</a>`; break;

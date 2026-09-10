@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright';
+import yieldMath from '../shared/yield.cjs';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'labmate-yield-'));
 let application, page;
@@ -25,6 +26,11 @@ try {
   let state = await api('records.createNotebook', { name: 'Yield checks', description: '', discipline: 'Chemistry', color: 'sage' });
   state = await api('records.createExperiment', { notebookId: state.notebooks[0].id, label: 'Yield', title: 'Mixed-unit calculation', date: '2026-09-09', author: 'Automated validation' });
   const runId = state.runs[0].id;
+  // Existing saved cards remain editable after creation moves to material markup.
+  await api('documents.save', { runId, expectedRevision: state.runs[0].revision, documents: {
+    ...state.runs[0].documents,
+    data: { type: 'doc', content: [{ type: 'yieldCalculation', attrs: { ...yieldMath.DEFAULT_YIELD_INPUTS } }, { type: 'paragraph' }] },
+  } });
   const savedData = async predicate => {
     const deadline = Date.now() + 12000;
     while (Date.now() < deadline) {
@@ -39,7 +45,6 @@ try {
     await page.reload(); await page.locator('.notebook-card').first().click(); await page.locator('.entry-list-item').first().click(); await page.getByRole('tab', { name: 'Data', exact: true }).click();
   };
   await reopen();
-  await page.getByRole('button', { name: 'Add yield calculation', exact: true }).click();
   let card = page.locator('.yield-card');
   assert.equal(await card.count(), 1);
   assert.equal(await card.getByLabel('Amount', { exact: true }).first().inputValue(), '');
@@ -95,7 +100,7 @@ try {
   state = await api('records.repeatRun', { runId, date: '2026-09-09' });
   assert.ok(!JSON.stringify(state.runs.find(run => run.id !== runId).documents.data).includes('yieldCalculation'));
   assert.deepEqual(errors, []);
-  console.log('PASS yield insertion, mixed-unit ratio, live editing, incomplete persistence, zero, over-100 warning, Remove/Undo, layouts, immediate navigation/native-close flush, repeat reset, and runtime errors');
+  console.log('PASS legacy yield-card loading, mixed-unit ratio, live editing, incomplete persistence, zero, over-100 warning, Remove/Undo, layouts, immediate navigation/native-close flush, repeat reset, and runtime errors');
 } catch (error) {
   if (page) console.error(await page.locator('body').innerText({timeout:1000}).catch(() => 'Window unavailable'));
   throw error;

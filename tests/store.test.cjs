@@ -8,6 +8,7 @@ const path = require('node:path');
 const test = require('node:test');
 const BetterSqlite3 = require('better-sqlite3');
 const { LibraryStore, EMPTY_DOCUMENT, recoverRestoreJournal } = require('../electron/backend/store.cjs');
+const { makeSchema2 } = require('./helpers/legacy-schema.cjs');
 const { RESTORE_JOURNAL_NAME } = require('../electron/backend/backup.cjs');
 
 const stores = new Set();
@@ -93,7 +94,7 @@ test('starts empty, persists through reopen, and keeps numbering monotonic after
   assert.deepEqual(initial.notebooks, []);
   assert.deepEqual(initial.experiments, []);
   assert.deepEqual(initial.runs, []);
-  assert.equal(initial.schemaVersion, 2);
+  assert.equal(initial.schemaVersion, 3);
   assert.deepEqual(
     store.db.prepare('SELECT DISTINCT document_schema_version AS version FROM documents').all(),
     [],
@@ -282,7 +283,7 @@ test('keeps shared attachment objects until the final metadata reference is gone
   const one = attachment(first.run.id, hash);
   const two = attachment(second.run.id, hash);
   const addedOne = store.addAttachment(one);
-  assert.equal(addedOne.schemaVersion, 2);
+  assert.equal(addedOne.schemaVersion, 3);
   assert.equal(addedOne.attachments.some(item => item.id === one.id), true);
   assert.throws(() => store.addAttachment(one), error => error && error.code === 'VALIDATION');
   const addedTwo = store.addAttachment(two);
@@ -568,7 +569,7 @@ test('schema 1 libraries migrate transactionally to sage and retain records and 
   legacy.close();
   store.reopen();
   const migrated = store.snapshot();
-  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.schemaVersion, 3);
   assert.equal(migrated.notebooks[0].id, notebook.id);
   assert.equal(migrated.preferences.appearance, 42);
   assert.equal(migrated.preferences.palette, 'sage');
@@ -576,4 +577,48 @@ test('schema 1 libraries migrate transactionally to sage and retain records and 
   store.close(); store.reopen();
   assert.equal(store.snapshot().preferences.palette, 'ocean');
   errorCode(store.dispatch('preferences.update', {palette: 'unrecognized'}), 'VALIDATION');
+});
+
+test('schema 2 migration preserves the complete snapshot and allows persistent Midnight Purple', () => {
+  const {root, store} = openStore();
+  const notebook = createNotebook(store, 'Existing schema 2 notebook');
+  const {run} = createExperiment(store, notebook.id);
+  value(store.dispatch('documents.save', {
+    runId: run.id, expectedRevision: run.revision,
+    documents: { ...run.documents, information: documentWithText('Existing experimental record') },
+  }));
+  value(store.dispatch('preferences.update', {
+    appearance: 100, palette: 'lavender', layout: 'tabs', directoryView: 'list', sort: 'number-asc',
+  }));
+  const before = store.snapshot();
+  store.close();
+  const legacy = new BetterSqlite3(path.join(root, 'library.sqlite'));
+  makeSchema2(legacy);
+  assert.throws(() => legacy.prepare("UPDATE preferences SET palette = 'midnight'").run(), /CHECK constraint/);
+  legacy.close();
+  store.reopen();
+  assert.deepEqual(store.snapshot(), before);
+  assert.equal(store.db.pragma('user_version', {simple: true}), 3);
+  value(store.dispatch('preferences.update', {palette: 'midnight'}));
+  store.close(); store.reopen();
+  assert.deepEqual(store.snapshot().preferences, {...before.preferences, palette: 'midnight'});
+  assert.equal(store.db.pragma('integrity_check', {simple: true}), 'ok');
+});
+
+test('failed schema 2 migration rolls back the preference rebuild and version together', () => {
+  const {root, store} = openStore();
+  store.close();
+  const legacy = new BetterSqlite3(path.join(root, 'library.sqlite'));
+  makeSchema2(legacy);
+  legacy.pragma('ignore_check_constraints = ON');
+  legacy.prepare('UPDATE preferences SET appearance = 101').run();
+  const before = legacy.prepare('SELECT * FROM preferences').all();
+  legacy.close();
+  assert.throws(() => store.reopen());
+  const unchanged = new BetterSqlite3(path.join(root, 'library.sqlite'));
+  try {
+    assert.equal(unchanged.pragma('user_version', {simple: true}), 2);
+    assert.deepEqual(unchanged.prepare('SELECT * FROM preferences').all(), before);
+    assert.equal(unchanged.prepare("SELECT name FROM sqlite_master WHERE name = 'preferences_before_v3'").get(), undefined);
+  } finally { unchanged.close(); }
 });

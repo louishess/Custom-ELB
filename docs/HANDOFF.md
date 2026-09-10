@@ -1,18 +1,29 @@
 # LabMate functional application handoff
 
-Updated September 9, 2026. Version 0.4.1 builds on commit `dc90f1d`.
+Updated September 9, 2026. Version 0.4.3 builds on commit `ec51ff7` (dictation fix).
 These feature changes are in the working tree, uncommitted and unpublished.
-Preserve the frontend, six-palette appearance continuum, and local-first
+Preserve the frontend, seven-palette appearance continuum, and local-first
 architecture. Read `BACKEND-CONTRACT.md` before changing subsystem interfaces.
 See `VALIDATION.md` for the evidence and remaining live acceptance checks.
 
-The 0.4.1 feedback pass fixes dictation preparation and repeated recording startup,
+Version 0.4.3 adds Midnight Purple as a separate Settings palette: soft purple at the light end, a pure black canvas and violet accents at the dark end. Existing palettes, brightness, notebook identities and status colors remain unchanged. Schema 3 expands the palette constraint through a transactional preferences-only migration from schemas 1 and 2.
+
+The previous 0.4.1 feedback pass fixed dictation preparation and repeated recording startup,
 and enlarges the Insert Table dialog with comfortable spacing and larger inputs.
 Yield calculation behavior is unchanged. Start now prepares/reserves the exact
 progressive transcription module before opening audio. The native helper retains
 its stopped audio engine, reconnects valid configuration changes, and rejects
 stale recording/tap callbacks. Renderer operation guards prevent cancelled
 preparation or finalization from changing a newer recording.
+
+The 0.4.2 yield pass adds Mark as Starting Material, Mark as Product and Copy
+Yield in the editor toolbar. Distinct semantic highlights work across all four
+sections of one run. The parser accepts spaced/unspaced mass or volume, molar
+units and equivalents. Parse failures open a manual-entry popup; saved manual
+values are tied to the exact highlighted text and must be reviewed after edits.
+Copy Yield includes theoretical molar amount, actual amount and percentage.
+Old yield cards remain editable, but new calculations use markup controls.
+Read `YIELD-MARKUP.md` for supported notation and the manual fallback workflow.
 
 ## Product and data boundaries
 
@@ -34,16 +45,17 @@ user-visible revision history.
 The editor provides table insertion sizing, row/column actions, headers,
 merge/split, fit-to-editor and visible drag handles. Column widths and merged
 cells persist; rich exports retain them and text/Markdown report layout losses.
-Data supports versioned editable yield cards. Amounts use mol/mmol/µmol/nmol;
+Data retains previously saved versioned editable yield cards. Amounts use mol/mmol/µmol/nmol;
 the user selects one starting material as the calculation basis and provides
 its equivalents ratio to product. Inputs autosave with the document, incomplete
 values remain editable, and exports recompute a static readable summary.
-Repeat still clears Data, including yield cards.
+Repeat still clears Data, including yield cards; it also removes material role marks from copied Information/Method while keeping the prose and ordinary formatting.
 
-Appearance offers Original Sage, Ocean, Lavender, Terracotta, Rose and Graphite.
-All six preserve the 0–100 slider and semantic notebook/status colors. Schema 2
-adds palette persistence; schema 1 libraries and authenticated backups migrate
-to Original Sage without losing existing preferences or records.
+Appearance offers Original Sage, Ocean, Lavender, Terracotta, Rose, Graphite and Midnight Purple.
+All seven preserve the 0–100 slider and semantic notebook/status colors. Schema 3
+adds Midnight Purple to the saved palette choices. Schema 1 libraries migrate to
+Original Sage; schema 2 libraries keep their saved palette and brightness.
+Authenticated backups from schemas 1, 2 and 3 are supported; future schemas are rejected.
 
 Integrated dictation uses a bundled Swift helper with Apple's SpeechAnalyzer
 and SpeechTranscriber on macOS 26+. The helper exposes capabilities and language
@@ -113,7 +125,8 @@ deletion does not erase older backup or rollback copies. See `RECOVERY.md`.
 | `electron/backend/worker.cjs` | Dedicated utility process, serial mutation queue, progress/cancellation |
 | `electron/backend/schema.cjs` | Version-specific required columns and palette IDs |
 | `electron/dictation.cjs`, `native/speech/main.swift` | Session-scoped speech helper, permissions, audio and transcript lifecycle |
-| `shared/yield.cjs`, `src/YieldCalculation.tsx` | Shared deterministic calculation and persisted editor card |
+| `shared/yield.cjs`, `src/YieldCalculation.tsx` | Shared deterministic calculation and legacy persisted editor card |
+| `shared/material-yield.cjs`, `src/MaterialYield.tsx` | Material parser, semantic highlights, manual fallback and Copy Yield |
 | `electron/backend/store.cjs` | SQLite migrations, repository operations, optimistic revisions, Trash |
 | `electron/backend/backup.cjs` | Snapshot, encryption, archive validation and journalled restoration |
 | `electron/backend/files.cjs`, `parser.cjs` | Managed imports and isolated spreadsheet previews |
@@ -147,7 +160,7 @@ npm run package:mac
 LABMATE_REQUIRE_PACKAGE=1 npm run test:backend
 LABMATE_APP_BINARY="$PWD/out/LabMate-darwin-arm64/LabMate.app/Contents/MacOS/LabMate" npm run check:functional
 LABMATE_APP_BINARY="$PWD/out/LabMate-darwin-arm64/LabMate.app/Contents/MacOS/LabMate" npm run check:ui
-# Use the same LABMATE_APP_BINARY for check:tables, check:yield, check:palettes, check:dictation.
+# Use the same LABMATE_APP_BINARY for check:tables, check:yield, check:material-yield, check:palettes, check:dictation.
 ```
 
 CommonJS desktop code is explicitly syntax-checked and packaged as source;

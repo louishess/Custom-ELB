@@ -16,6 +16,7 @@ const path = require('node:path');
 // zod is a required runtime dependency.  Failing at startup when packaging
 // omits it is safer than silently weakening the worker trust boundary.
 const z = require('zod');
+const { PALETTES } = require('./schema.cjs');
 
 const SECTION_IDS = Object.freeze(['information', 'method', 'notes', 'data']);
 const STATUS_VALUES = Object.freeze(['todo', 'progress', 'complete']);
@@ -246,7 +247,7 @@ function payloadShapeError(method, payload, internal = true) {
         && Object.keys(payload).length > 0
         && Object.keys(payload).every(key => ['appearance', 'palette', 'layout', 'directoryView', 'sort'].includes(key))
         && (payload.appearance === undefined || isInteger(payload.appearance, { min: 0, max: 100 }))
-        && (payload.palette === undefined || ['sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite'].includes(payload.palette))
+        && (payload.palette === undefined || PALETTES.includes(payload.palette))
         && (payload.layout === undefined || ['continuous', 'tabs'].includes(payload.layout))
         && (payload.directoryView === undefined || ['grid', 'list'].includes(payload.directoryView))
         && (payload.sort === undefined || isString(payload.sort, { min: 1, max: 128 }))

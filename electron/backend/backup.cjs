@@ -8,7 +8,7 @@ const { ZipArchive } = require('archiver');
 const yauzl = require('yauzl');
 
 const FORMAT_VERSION = 1;
-const { SCHEMA_VERSION: SUPPORTED_SCHEMA_VERSION, columnsForVersion } = require('./schema.cjs');
+const { SCHEMA_VERSION: SUPPORTED_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, columnsForVersion, palettesForVersion } = require('./schema.cjs');
 const MAGIC = Buffer.from('LABMATE-ENCRYPTED-BACKUP\0', 'utf8');
 const HEADER_LENGTH_BYTES = 4;
 const AUTH_TAG_BYTES = 16;
@@ -231,6 +231,9 @@ function validateHeaderObject(header, fileSize, prefixLength, maxBackupBytes) {
   }
   if (header.schemaVersion > SUPPORTED_SCHEMA_VERSION) {
     throw backupError('CORRUPT_BACKUP', 'The backup was created by a newer LabMate schema.');
+  }
+  if (!SUPPORTED_SCHEMA_VERSIONS.includes(header.schemaVersion)) {
+    throw backupError('CORRUPT_BACKUP', 'The backup schema version is unsupported.');
   }
   decodeBase64(header.salt, SALT_BYTES, 'salt');
   decodeBase64(header.nonce, NONCE_BYTES, 'nonce');
@@ -507,7 +510,7 @@ function normalizeManifestObject(value) {
 function validateManifest(manifest, limits) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw backupError('CORRUPT_BACKUP', 'The backup manifest is invalid.');
   if (manifest.formatVersion !== FORMAT_VERSION) throw backupError('CORRUPT_BACKUP', 'The backup manifest format is unsupported.');
-  if (!numberInRange(manifest.schemaVersion, 1, SUPPORTED_SCHEMA_VERSION)) {
+  if (!SUPPORTED_SCHEMA_VERSIONS.includes(manifest.schemaVersion)) {
     if (Number.isInteger(manifest.schemaVersion) && manifest.schemaVersion > SUPPORTED_SCHEMA_VERSION) {
       throw backupError('CORRUPT_BACKUP', 'The backup was created by a newer LabMate schema.');
     }
@@ -619,6 +622,12 @@ function validateCandidateSchema(candidatePath, manifestSchemaVersion, store, op
       const candidateColumns = schemaColumnsFromDb(db, table);
       for (const column of currentColumns) {
         if (!candidateColumns.includes(column)) throw backupError('CORRUPT_BACKUP', 'The restored database schema is missing a column.');
+      }
+    }
+    if (manifestSchemaVersion >= 2) {
+      const preferences = db.prepare('SELECT palette FROM preferences WHERE id = 1').get();
+      if (!preferences || !palettesForVersion(manifestSchemaVersion).includes(preferences.palette)) {
+        throw backupError('CORRUPT_BACKUP', 'The restored database appearance palette is unsupported for its schema.');
       }
     }
     if (candidateTables.includes('documents')) {
@@ -1178,7 +1187,7 @@ function createBackupService(store, options = {}) {
         await ensureDirectory(stage);
         job.progress('snapshot', 'Capturing a consistent library snapshot.');
         const snapshot = typeof store.snapshot === 'function' ? store.snapshot() : null;
-        if (!snapshot || !numberInRange(snapshot.schemaVersion, 1, SUPPORTED_SCHEMA_VERSION)) {
+        if (!snapshot || !SUPPORTED_SCHEMA_VERSIONS.includes(snapshot.schemaVersion)) {
           throw backupError('IO', 'The library snapshot schema is unsupported.');
         }
         const databasePath = path.resolve(store.databasePath || path.join(root, 'library.sqlite'));

@@ -31,5 +31,6 @@ assert.deepEqual(appearancePalette(101), appearancePalette(100));
 assert.deepEqual(appearancePalette(NaN), appearancePalette(0));
 assert.equal(appearancePalette(0).canvas, '#f9f1df');
 assert.equal(appearancePalette(100).canvas, '#1d2826');
-assert.equal(new Set(appearancePalettes.map(({ id }) => appearancePalette(0, id).canvas)).size, 6);
-console.log(`PASS all six palettes at 101 slider positions, endpoint and semantic color preservation, monotonic brightness, and text contrast (minimum ${minimumContrast.toFixed(2)}:1).`);
+assert.equal(appearancePalette(100, 'midnight').canvas, '#000000');
+assert.equal(new Set(appearancePalettes.map(({ id }) => appearancePalette(0, id).canvas)).size, appearancePalettes.length);
+console.log(`PASS all ${appearancePalettes.length} palettes at 101 slider positions, endpoint and semantic color preservation, monotonic brightness, and text contrast (minimum ${minimumContrast.toFixed(2)}:1).`);

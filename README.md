@@ -10,6 +10,10 @@ The functional release adds notebook and experiment creation, repeated runs, ric
 
 Version 0.4 adds on-device dictation with transcript review (macOS 26+), six coordinated palettes, table sizing and structural controls, and editable molar yield calculations in Data. The calculator uses one user-designated starting material and equivalents ratio; mass conversion and automatic limiting-reagent detection are not included.
 
+Version 0.4.3 adds **Midnight Purple** under Settings → Workspace palette. The light end is soft purple; the darkest slider position uses a black background with violet accents. Existing palette selections stay unchanged.
+
+Version 0.4.2 adds [yield from material highlights](docs/YIELD-MARKUP.md): mark starting material and product in the toolbar, detect amounts/units automatically, and copy theoretical and actual yield. Unrecognized descriptions open a manual-entry popup. Previous yield cards remain editable.
+
 Version 0.4.1 addresses dictation startup and gives the Insert Table dialog more room. Start prepares the exact speech model before opening the microphone. Cancelling preparation prevents a later recording from starting. Yield calculations are unchanged in this update.
 
 The existing warm Mac styling, notebook accents, continuous/tabbed entry layouts, and 0–100 appearance slider are retained. The local editor supports headings, marks, lists, links, tables, alignment, subscript, and superscript.
@@ -62,7 +66,7 @@ LABMATE_APP_BINARY="$PWD/out/LabMate-darwin-arm64/LabMate.app/Contents/MacOS/Lab
 LABMATE_APP_BINARY="$PWD/out/LabMate-darwin-arm64/LabMate.app/Contents/MacOS/LabMate" npm run check:ui
 npm run check:dependencies
 # With the same LABMATE_APP_BINARY, also run check:tables, check:yield,
-# check:palettes and check:dictation.
+# check:material-yield, check:palettes and check:dictation.
 ```
 
 Automated functional checks use disposable libraries and synthetic files, never personal notebook records or a real Box destination. Native dialogs are substituted with disposable paths where file selection needs automation. Dictation UI tests inject synthetic transcript events; native recognition also passes a locally generated audio fixture. The 0.4.1 packaged app passed two actual microphone Start/Stop cycles. Live utterance accuracy, offline transcription, Keychain setup, and Box upload/download remain separate acceptance checks. Reports and screenshots are under `artifacts/` and excluded from Git.

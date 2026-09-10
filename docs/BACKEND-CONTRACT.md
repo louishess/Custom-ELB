@@ -14,7 +14,7 @@ PM-owned shared contract is `shared/contracts.ts`. Coordinate amendments with PM
 
 ## Cross-cutting frozen choices
 
-Storage schemaVersion 2 (schema 1 remains restorable and migrates transactionally); preferences add palette with default sage; section JSON root type doc, empty paragraph default. Revision increments on each record change. Run save includes all four documents in single transaction. Independent metadata changes can yield STALE_REVISION: UI must retain pending draft and offer reload/retry, not silently replace content. Notebook/experiment renames don't change numeric IDs. Repeat copies Information and Method; date supplied by renderer validated, author/title copied, Notes/Data empty, no attachments or scheme memberships copied. Scheme membership is ordered UUID list, same notebook only, unique. Trash restore requires ancestors active (UI offers restore parent first); purge only trashed records and validates revision. Initial setup includes author entry field; no accounts. Trash permanence does not remove existing backups.
+Storage schemaVersion 3 (schemas 1 and 2 remain restorable and migrate transactionally); preferences add palette with default sage; section JSON root type doc, empty paragraph default. Revision increments on each record change. Run save includes all four documents in single transaction. Independent metadata changes can yield STALE_REVISION: UI must retain pending draft and offer reload/retry, not silently replace content. Notebook/experiment renames don't change numeric IDs. Repeat copies Information and Method; date supplied by renderer validated, author/title copied, Notes/Data empty, no attachments or scheme memberships copied. Scheme membership is ordered UUID list, same notebook only, unique. Trash restore requires ancestors active (UI offers restore parent first); purge only trashed records and validates revision. Initial setup includes author entry field; no accounts. Trash permanence does not remove existing backups.
 
 Installation/package/lockfile and shared types belong to the primary integrator.
 All tests use disposable libraries and destinations; no real Box writes or
@@ -25,8 +25,8 @@ personal records during automated validation.
 - `schema.cjs` is the source of truth for supported SQLite versions and required
   columns. Restore validates the authenticated candidate against its own
   supported version, not against the currently open database's columns.
-  Store migration from v1 to v2 is transactional and adds palette=sage.
-- Preferences palette is one of sage/ocean/lavender/terracotta/rose/graphite;
+  Store migration from v1/v2 to v3 transactionally rebuilds only preferences to expand its palette CHECK constraint. v1 gets palette=sage; v2 preserves its saved palette and all other values.
+- Preferences palette is one of sage/ocean/lavender/terracotta/rose/graphite/midnight;
   validate it at the main/worker/store boundaries.
 - `yieldCalculation` is an atomic Tiptap node with version 1 inputs in attrs.
   Numeric inputs are strings so incomplete drafts survive autosave. The shared
@@ -49,3 +49,22 @@ personal records during automated validation.
   cloud-upload completion.
 
 Storage-only citation_associations v1 table reserves id, run_id (FK cascade), source_instance, library_id, item_key, snapshot_json and created_at, unique per run/source/library/item. It starts empty and has no renderer methods until Zotero integration.
+
+## Material yield markup (0.4.2)
+
+The `yieldMaterial` inline mark stores a role (`starting` or `product`), bounded
+identifier and optional version-1 manual input object. Tiptap's `manual: null`
+means automatic parsing. A manual object stores sourceText, label, molarAmount,
+molarUnit and equivalents, with strict numeric/unit/field validation. Calculation
+requires exact sourceText equality, one uninterrupted selection of each role per
+run and positive starting amount/equivalents. No schema migration is needed;
+marks live in revision-checked document JSON. Repeats strip these roles from
+copied Information/Method and still clear Notes/Data.
+
+`yield.copy` accepts only `{starting: {text, manual?}, product: {text, manual?}}`.
+The main process validates bounded payloads, recomputes the result through the
+shared pure parser/calculator and writes only the generated plain-text summary
+to the clipboard. It exposes no clipboard read or arbitrary write operation.
+Invalid or incomplete material input leaves the clipboard unchanged. The return
+value is `{copied: true, summary}`. This is a main-process operation; workers
+continue to own document persistence and exports.

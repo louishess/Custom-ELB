@@ -388,7 +388,7 @@ test('real worker child opens an isolated library through the raw worker transpo
   try {
     const snapshot = await request('child-snapshot', 'records.snapshot', undefined);
     assert.equal(snapshot.result.ok, true);
-    assert.equal(snapshot.result.value.schemaVersion, 2);
+    assert.equal(snapshot.result.value.schemaVersion, 3);
     const shutdown = await request('child-shutdown', '__shutdown', undefined);
     assert.equal(shutdown.result.ok, true);
   } finally {

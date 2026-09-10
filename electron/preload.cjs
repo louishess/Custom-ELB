@@ -24,6 +24,7 @@ const CLOSE_RESULT_CHANNEL = 'labmate:before-close-result';
 const NAMESPACE_METHODS = Object.freeze({
   records: Object.freeze(['snapshot', 'createNotebook', 'updateNotebook', 'createExperiment', 'updateExperiment', 'repeatRun', 'updateRun']),
   documents: Object.freeze(['save']),
+  yield: Object.freeze(['copy']),
   schemes: Object.freeze(['create', 'update', 'remove']),
   preferences: Object.freeze(['update']),
   trash: Object.freeze(['move', 'restore', 'purge']),

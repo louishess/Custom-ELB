@@ -1,4 +1,63 @@
-# LabMate 0.4.1 feedback fixes
+# LabMate 0.4.3 Midnight Purple validation
+
+Verified 2026-09-10T00:16:51.514950+00:00. Local Apple Silicon review build on `ec51ff7`; changes remain uncommitted and unpublished.
+
+**Midnight Purple** is a seventh separate palette in Settings. The light end is soft purple; appearance 100 has a pure black canvas with violet controls, selected states and header tint. The six existing palettes and notebook/status identities retain their colors. Original Sage remains the default.
+
+- Application: `out/LabMate-darwin-arm64/LabMate.app`
+- ZIP: `artifacts/LabMate-0.4.3-macOS-arm64.zip` (177,467,319 bytes)
+- ZIP SHA-256: `60a9d333a601a95d4b2580f5665767bc62cfb5e153e28e7ea5798531d54a57f3`
+- app.asar SHA-256: `f109003126f0b01359fd4d9ba3f2e46852b9393d9090fccb2b0aafdc378cc086`
+- ZIP readback: `artifacts/archive-check-0.4.3.txt`.
+
+| Current check | Result | Evidence |
+| --- | --- | --- |
+| TypeScript, renderer, desktop syntax, Swift helper and arm64 packaging | Passed | `artifacts/release-0.4.3/package.txt` |
+| Backend/package, migration, recovery and existing subsystem tests | 132 passed, zero failures/skips | `artifacts/release-0.4.3/backend.txt` |
+| All seven palettes across the 101-position slider | 707 combinations passed; minimum tested text contrast 4.50:1 | `artifacts/release-0.4.3/appearance.txt` |
+| Packaged palette Settings, persistence and full restart | 12 checks passed; 31 screenshots | `artifacts/palettes/checks.json` |
+| Packaged existing functional workflows | 12 passed | `artifacts/functional/checks.json` |
+| Visual inspection | Black/violet directory and narrow Settings view readable and unclipped | `artifacts/palettes/midnight-100-directory.png`, `artifacts/palettes/midnight-100-narrow.png` |
+
+Schema 3 expands the palette constraint through a transaction that rebuilds only preferences. Tests use genuine schema-2 tables with the old six-palette CHECK, verify every snapshot value survives migration, verify rollback on failure, restore authenticated schema-1 and schema-2 backups, roundtrip Midnight Purple through encrypted schema-3 backups, and reject schema-2 archives that falsely contain the new palette. Unsupported future versions remain rejected. All testing used disposable libraries/profiles/destinations; the working library and Box account were not modified.
+
+The palette UI checks also cover keyboard radio navigation/focus, reduced motion, narrow windows and exact black at the darkest endpoint. Feature acceptance from 0.4.2 and prior releases below remains historical; this pass changes appearance and its persisted preference support.
+
+---
+
+# LabMate 0.4.2 material yield baseline
+
+Verified 2026-09-09T21:26:06.234621+00:00. Local Apple Silicon review build on `ec51ff7`; working-tree changes remain uncommitted and unpublished. The new workflow marks one starting material and one product across a run's editor sections, automatically parses amounts/units/equivalents, and copies theoretical and actual yield. Parse failures open the persisted manual-entry popup. Existing yield cards remain supported.
+
+- Application: `out/LabMate-darwin-arm64/LabMate.app`
+- ZIP: `artifacts/LabMate-0.4.2-macOS-arm64.zip` (177,464,892 bytes)
+- ZIP SHA-256: `1dc876aaedfb94f53fff7ae398532fa6efd50fbe37b8d6a70331bcd454f90a71`
+- app.asar SHA-256: `468bfbf492b50c24ae779f029c8c632fd08b046f8b1b05f439e3bf2c69ba479c`
+- ZIP readback: `artifacts/archive-check-0.4.2.txt`.
+
+| Check on current sources/package | Result | Evidence |
+| --- | --- | --- |
+| TypeScript, desktop syntax, Vite, Swift helper and arm64 package | Passed | `artifacts/release-0.4.2/package.txt` |
+| Backend/package, parser, persistence/export, clipboard bridge and native lifecycle | 127 passed; zero failures/skips | `artifacts/release-0.4.2/backend-final.txt` |
+| New packaged material markup workflows | 7 passed | `artifacts/material-yield/checks.json` |
+| Existing packaged yield cards | Passed | `artifacts/release-0.4.2/legacy-yield.txt` |
+| Packaged functional workflows | 12 passed | `artifacts/functional/checks.json` |
+| Packaged existing UI workflows | 13 passed | `artifacts/ui/checks.json` |
+| Packaged dictation UI with mocked speech | 7 passed | `artifacts/dictation/checks.json` |
+| Packaged table editing and enlarged dialog | Passed | `artifacts/release-0.4.2/tables.txt` |
+| Appearance continuum | 606 palette/position combinations passed | `artifacts/release-0.4.2/appearance.txt` |
+| Visual review | Manual dialog at 600px viewport and editor at 1100px inspected, readable and unclipped | `artifacts/material-yield/manual-entry-narrow.png`, `artifacts/material-yield/marked-yield.png` |
+| Native speech helper signature | Valid ad-hoc bundle signature | `codesign --verify --strict` |
+
+New coverage verifies spacing variants, mixed molar units and non-1:1 equivalents (75% example), zero product, scientific notation, ambiguous/invalid inputs, numeric range, above-100% handling, formatting splits, separate Undo/Redo, cross-section calculation, autosave/reopen, explicit manual correction and exact-source invalidation. Manual values and marks survive encrypted backup restoration; repeats clear semantic roles while keeping copied prose and ordinary formatting. HTML/RTF/DOCX retain role colors; all five exports identify roles without exposing internal mark identifiers/manual metadata.
+
+Clipboard UI checks invoke the real typed bridge and shared parser; only the final Electron clipboard write is captured inside the disposable app. The user's clipboard was neither read nor changed. Invalid or stale manual input never writes a result. All app/backup checks use disposable libraries, profiles and archive destinations. No working library or Box account was replaced.
+
+Usage and limitations are in `YIELD-MARKUP.md`. Theoretical yield is molar; no molar mass, density, purity or automatic limiting-reagent inference is performed. The prior speech live acceptance and external Box/distribution limits below remain separate; this pass did not access the microphone or user's Box account.
+
+---
+
+# LabMate 0.4.1 feedback baseline
 
 Verified 2026-09-09T20:59:53.122273+00:00. Local review build; changes remain uncommitted and unpublished. This pass fixes dictation startup/restart and the cramped Insert Table dialog. Yield calculation behavior is unchanged.
 

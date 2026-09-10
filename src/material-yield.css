@@ -1,0 +1,15 @@
+.material-yield-controls { display: flex; align-items: center; gap: 2px; }
+.yield-material { border-radius: 3px; padding: 1px 0; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.yield-material-starting, .material-role-starting.active { background: #d5efd8 !important; color: #173923 !important; text-decoration-color: #315d39; }
+.yield-material-product, .material-role-product.active { background: #d6e6ff !important; color: #18355c !important; text-decoration-color: #315587; }
+.yield-material mark { background: transparent; color: inherit; }
+.material-yield-status { order: 3; flex-basis: 100%; min-width: 0; display: flex; flex-direction: column; gap: 7px; padding: 10px 4px 2px; border-top: 1px solid var(--line); color: var(--ink); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.material-yield-feedback { color: var(--ink-secondary); }
+.material-yield-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--ink-secondary); font-size: 11px; }
+.material-yield-legend .yield-material { padding: 1px 6px; }
+.material-yield-controls button:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+.material-manual-body { display: flex; flex-direction: column; gap: 18px; padding: 24px; }
+.material-manual-body p { margin: 0; }
+.material-manual-body blockquote { margin: 0; padding: 12px; background: var(--surface-soft); border-left: 3px solid var(--accent-ink); color: var(--ink-secondary); overflow-wrap: anywhere; max-height: 120px; overflow-y: auto; }
+.material-manual-amount { display: grid; grid-template-columns: minmax(0, 2fr) minmax(80px,1fr); gap: 14px; }
+.material-manual-edit { align-self: flex-start; border: 0; background: transparent; color: var(--accent-ink); font-size: 12px; text-decoration: underline; cursor: pointer; padding: 0; }

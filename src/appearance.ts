@@ -72,6 +72,7 @@ export const appearancePalettes = [
   { id: 'terracotta', label: 'Terracotta' },
   { id: 'rose', label: 'Rose' },
   { id: 'graphite', label: 'Graphite' },
+  { id: 'midnight', label: 'Midnight Purple' },
 ] as const;
 export type AppearancePaletteId = typeof appearancePalettes[number]['id'];
 
@@ -98,6 +99,10 @@ const variants: Record<Exclude<AppearancePaletteId, 'sage'>, { light: PaletteOve
   graphite: {
     light: { canvas: '#f0f1f2', surface: '#fbfcfd', 'surface-soft': '#f4f5f6', 'surface-muted': '#e3e6e9', sidebar: '#e7e9ec', line: '#d4d9de', ink: '#303740', 'ink-secondary': '#5e6670', 'ink-muted': '#606872', brand: '#505e70', green: '#556374', 'green-dark': '#455264', 'accent-ink': '#4d5c70', 'accent-soft': '#e0e6ed', spark: '#72869d' },
     dark: { canvas: '#24282e', surface: '#30363e', 'surface-soft': '#343b44', 'surface-muted': '#424b56', sidebar: '#292f37', line: '#525e6d', ink: '#e9edf3', 'ink-secondary': '#bdc6d3', 'ink-muted': '#afbcca', brand: '#5a687b', green: '#5a687b', 'green-dark': '#4b596d', 'accent-ink': '#bccfe9', 'accent-soft': '#425065', spark: '#aec7e3' },
+  },
+  midnight: {
+    light: { canvas: '#f3ebfc', surface: '#fcf7ff', 'surface-soft': '#f5edfc', 'surface-muted': '#e9dcf5', sidebar: '#ece1f6', line: '#dac8eb', ink: '#342541', 'ink-secondary': '#675173', 'ink-muted': '#6c557a', brand: '#7134a7', green: '#7438a8', 'green-dark': '#5e288c', 'accent-ink': '#683098', 'accent-soft': '#ead9f8', spark: '#9953c4' },
+    dark: { canvas: '#000000', surface: '#0c0a10', 'surface-soft': '#15111b', 'surface-muted': '#21182c', sidebar: '#060509', line: '#3d2c50', ink: '#f2eafa', 'ink-secondary': '#cfbddf', 'ink-muted': '#bda6d0', brand: '#7843a8', green: '#7843a8', 'green-dark': '#64358f', 'accent-ink': '#d6b2ff', 'accent-soft': '#2c183f', spark: '#c48aef' },
   },
 };
 
@@ -130,6 +135,8 @@ export function contrastRatio(first: string, second: string): number {
 }
 
 function atLuminance(color: string, target: number): string {
+  // Pure black is a valid endpoint; avoid dividing its zero luminance by zero.
+  if (target <= 0) return '#000000';
   const values = channels(color).map(linear);
   const current = weighted(values);
   // Mixing toward white/black in linear RGB preserves the target luminance.

@@ -13,10 +13,16 @@ const V1_COLUMNS = {
   preferences: ['id', 'appearance', 'layout', 'directory_view', 'sort'],
 };
 
-const SCHEMA_VERSION = 2;
-const PALETTES = Object.freeze(['sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite']);
+const SCHEMA_VERSION = 3;
+const SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3]);
+const V2_PALETTES = Object.freeze(['sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite']);
+const PALETTES = Object.freeze([...V2_PALETTES, 'midnight']);
 function columnsForVersion(version) {
-  if (version !== 1 && version !== 2) throw new Error('Unsupported library schema');
+  if (!SUPPORTED_SCHEMA_VERSIONS.includes(version)) throw new Error('Unsupported library schema');
   return { ...V1_COLUMNS, preferences: version === 1 ? V1_COLUMNS.preferences : [...V1_COLUMNS.preferences, 'palette'] };
 }
-module.exports = { SCHEMA_VERSION, PALETTES, columnsForVersion };
+function palettesForVersion(version) {
+  if (!SUPPORTED_SCHEMA_VERSIONS.includes(version)) throw new Error('Unsupported library schema');
+  return version === 3 ? PALETTES : version === 2 ? V2_PALETTES : [];
+}
+module.exports = { SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, PALETTES, columnsForVersion, palettesForVersion };
