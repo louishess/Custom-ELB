@@ -178,7 +178,7 @@ try {
     assert.ok(state.runs.some(run => run.author === 'Updated UI author' && JSON.stringify(run.documents.notes).includes('Draft after metadata update')));
     await page.locator('.notebook-card').first().click();
   });
-  await check('Parent Trash restoration and demonstration mode preserve the real library', async () => {
+  await check('Parent Trash restoration preserves the real library', async () => {
     const before = await snapshot();
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: 'Move notebook to Trash', exact: true }).click();
@@ -190,12 +190,6 @@ try {
     await page.getByText('Trash is empty', { exact: true }).waitFor();
     await closePanel();
     assert.equal((await snapshot()).runs.length, before.runs.length);
-    await page.getByRole('complementary', { name: 'Main navigation' }).getByRole('button', { name: 'View demonstration content', exact: true }).click();
-    await page.getByText('Demonstration mode', { exact: true }).waitFor();
-    await page.locator('.notebook-card').first().click();
-    assert.equal(await page.locator('[contenteditable="true"]').count(), 0);
-    await page.getByRole('button', { name: 'Return to my library', exact: true }).click();
-    await page.getByRole('heading', { name: 'Lab notebooks', exact: true }).waitFor();
     assert.deepEqual((await snapshot()).runs, before.runs);
     await page.waitForFunction(() => document.documentElement.dataset.appearance === '100');
     await page.locator('.notebook-card').first().click();

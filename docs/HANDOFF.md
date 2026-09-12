@@ -25,6 +25,12 @@ Copy Yield includes theoretical molar amount, actual amount and percentage.
 Old yield cards remain editable, but new calculations use markup controls.
 Read `YIELD-MARKUP.md` for supported notation and the manual fallback workflow.
 
+The September 9 UI cleanup removes the directory/tracker introductory copy,
+directory recent-entry subtitle and footer banner, tracker summary banner and
+persistence footnote, notebook-card discipline labels, and normal-library demo
+links/sidebar storage note. Notebook discipline data remains editable. Demo
+fallback on library-open failure and return-to-library controls remain available.
+
 ## Product and data boundaries
 
 Real libraries start empty. Demonstration mode is explicitly labelled,
