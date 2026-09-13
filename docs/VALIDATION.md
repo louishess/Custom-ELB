@@ -49,6 +49,61 @@ and other previously recorded distribution checks remain separate milestones.
 
 ---
 
+# LabMate white export validation — September 12, 2026
+
+The five existing writers now share LabMate's entry-code/title/metadata composition,
+numbered sections and reading order. HTML, DOCX and RTF use a fixed white/neutral
+document scheme with deliberate typography, tables, supporting blocks and page
+layout. Markdown and TXT retain the structure within their format capabilities.
+Figures retain their proportions; authored highlights and scientific image colors
+are preserved. No dependency or database change was introduced by this pass.
+
+This local Apple Silicon review build uses the committed `c72c282` application
+baseline plus the white export changes. Zotero/citation integration was being
+edited concurrently in the shared workspace. Its transient full-suite failures
+were not counted as export acceptance; its schema, bridge, frontend and References
+section changes are excluded from this isolated build. Export source changes remain
+in the live workspace alongside that work. The review app retains version 0.4.3;
+it is not a combined release or a notarized distribution build.
+
+- App: `artifacts/exports/review-build/LabMate.app`
+- ZIP: `artifacts/exports/LabMate-white-exports-macOS-arm64.zip`
+- Source/archive hashes and build scope: `artifacts/exports/review-build/manifest.json`
+- Final examples: `artifacts/exports/entry.{html,docx,rtf,md,txt}` and `notebook.{html,docx,rtf,md,txt}`
+- Historical specimens for comparison: `artifacts/exports/baseline/`
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| TypeScript, desktop syntax, Vite, Swift helper and arm64 package | Passed on isolated review source | `artifacts/exports/review-build/export-build.txt`, `export-package.txt` |
+| Backend and packaged tests | 139 passed; zero failures/skips | `artifacts/exports/review-build/export-backend-tests.txt` |
+| New presentation regression coverage | 7 tests passed, including 7 palettes at both brightness endpoints across all 3 rich formats | `tests/export-design.test.cjs`, `artifacts/exports/review-build/export-focused-tests.txt` |
+| Packaged functional workflows | 12 passed, including real files in all 5 formats and restart/restore | `artifacts/exports/review-build/functional/checks.json`, `export-functional.txt` |
+| Packaged existing UI workflows | 13 passed | `artifacts/exports/review-build/ui/checks.json`, `export-ui.txt` |
+| HTML browser layout | White page, 2:1 desktop title/body ratio, image proportions, 390px layout, Letter/A4 PDF generation and zero external requests passed | `artifacts/exports/layout-checks.json`, `*-screen.png`, `*-narrow.png`, `*-Letter.pdf`, `*-A4.pdf` |
+| DOCX visual review | All 5 final notebook pages reviewed through bundled LibreOffice; entry specimen also reviewed | `artifacts/exports/render-docx-final/`, `render-entry/` |
+| RTF visual review | All 6 final notebook pages reviewed through bundled LibreOffice; table continuation and fresh-entry page breaks verified | `artifacts/exports/render-rtf-final/` |
+| Packaged exporter freshness | Byte-for-byte match to the isolated final source, including the RTF page-break fix | `artifacts/exports/review-build/manifest.json` |
+
+Visual review resolved two implementation details. Portable Arial and Courier New
+keep sans-serif/monospace substitution in the available reader without Apple fonts;
+HTML keeps the native system stack. Very wide rich tables use labeled rows and an
+explicit warning when any fitted column would fall below 40 CSS pixels. The fallback
+preserves every original cell once, including span/header context. Existing merged
+table, material, yield, cancellation, overwrite and attachment-limit tests pass.
+
+All app checks used disposable libraries and profiles. The user's working library
+and cloud account were not used. Native Word inspection was attempted but computer-use
+screen capture failed; native Word, Pages, TextEdit and Windows rendering are still
+unverified. LibreOffice renders and macOS text readback do not establish acceptance
+in those readers. Fonts, pagination and running headers can vary by reader.
+
+Regenerate specimens with `node scripts/check-exports.mjs`. Check browser layout
+with `LABMATE_CHROMIUM='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' node scripts/check-export-layout.mjs`;
+the checker launches a disposable headless browser. Revalidate the combined app
+after the concurrent Zotero work is integrated.
+
+---
+
 # LabMate 0.4.3 Midnight Purple validation
 
 Verified 2026-09-10T00:16:51.514950+00:00. Local Apple Silicon review build on `ec51ff7`; changes remain uncommitted and unpublished.

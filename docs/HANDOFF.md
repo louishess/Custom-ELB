@@ -97,6 +97,23 @@ images and spreadsheet tables have richer output where supported. Markdown
 writes relative companion assets. Aggregate export limits are 128 MiB of
 raster data and 100,000 spreadsheet cells, with caption fallback warnings.
 
+The September 12 white export pass adds a shared presentation specification in
+`electron/backend/export-design.cjs`: separate entry code/title/metadata,
+numbered selected sections, neutral tables and supporting blocks, proportional
+figures, and new pages for subsequent entries in DOCX/RTF/printed HTML. HTML
+uses the native sans-serif stack; DOCX/RTF use portable Arial and Courier New.
+Markdown and TXT carry the same information hierarchy within their format limits.
+Application palette and brightness do not affect generated page styling;
+authored highlights and scientific image colors remain intact. Very wide rich
+tables fall back to labeled rows with an explicit warning. Selection, atomic
+file replacement, cancellation and attachment policies retain their existing
+contracts. This pass adds no database migration or dependency.
+
+See `EXPORT-DESIGN-PLAN.md` and the white-export section in `VALIDATION.md`.
+The export review build was isolated from concurrent Zotero integration edits;
+its acceptance does not establish acceptance of that integration. Native
+Word/Pages/TextEdit and Windows rendering remain manual acceptance items.
+
 ## Backups and recovery
 
 Settings provides password confirmation and native Box destination setup, first backup/Back up now, restore,
