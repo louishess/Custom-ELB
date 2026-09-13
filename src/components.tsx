@@ -281,8 +281,8 @@ export function EntrySections({ entry, documents, layout, activeSection, onAttac
   return <RichEntryEditor run={entry} attachments={attachments} documents={documents} layout={layout} activeSection={activeSection} onDocumentsChange={onDocumentsChange} onEditor={onEditor} onFocusSection={onFocusSection} onAttachment={onAttachment} onAddAttachments={onAddAttachments} readOnly={readOnly} resetToken={resetToken} />;
 }
 
-export function CitationChips({ onOpen, disabled = true }: { onOpen?: () => void; disabled?: boolean }) {
-  return <div className="citation-chips"><FileText size={14} /><span className="citation-label">Citations</span><button type="button" disabled={disabled} onClick={onOpen} title="Citation library is unavailable until Zotero is connected">Unavailable</button></div>;
+export function CitationChips({ onOpen, disabled = false, citations = [] }: { onOpen?: (id?: string) => void; disabled?: boolean; citations?: import('../shared/contracts').CitationRecord[] }) {
+  return <div className="citation-chips" aria-label="Experiment citations"><FileText size={14} /><span className="citation-label">Citations</span>{citations.map(c => <button key={c.id} type="button" onClick={() => onOpen?.(c.id)} title={`${c.snapshot.title || 'Untitled reference'} · Shared across all runs`}>{c.snapshot.title || 'Untitled reference'}</button>)}<button type="button" className="citation-plus" disabled={disabled} onClick={() => onOpen?.()} title="Add references to every run of this experiment"><Plus size={12} />Add citation</button></div>;
 }
 
 export function useDraftDocuments(documents: SectionDocuments) {

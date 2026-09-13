@@ -46,10 +46,10 @@ test('RTF uses logical grid boundaries, horizontal and vertical merges, and genu
   const { bytes } = await exported('rtf');
   const rtf = bytes.toString();
   for (const control of ['\\cellx1500', '\\cellx3750', '\\cellx6750', '\\clmgf', '\\clmrg', '\\clvmgf', '\\clvmrg']) assert.ok(rtf.includes(control), control);
-  assert.match(rtf, /Merged first\\par\nSeparate paragraph/);
-  assert.ok(rtf.includes('{\\b Side header}'));
-  assert.ok(rtf.includes('{\\b Middle header}'));
-  assert.ok(!rtf.includes('{\\b Merged first'));
+  assert.match(rtf, /Merged first\\par\n[^\n]* Separate paragraph/);
+  assert.ok(rtf.includes('\\b Side header'));
+  assert.ok(rtf.includes('\\b Middle header'));
+  assert.ok(!rtf.includes('\\b Merged first'));
   assert.equal((rtf.match(/Merged first/g) || []).length, 1);
 });
 

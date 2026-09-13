@@ -20,7 +20,7 @@ Permanent deletion affects the current library. Existing backup archives and the
 
 Open Settings → Backups, enter and confirm a password, then choose a destination folder inside the detected Box Drive directory. If Box Drive is unavailable, open or install it and retry. After setup, use Create first backup to produce and verify the initial copy. Show in Finder opens the configured folder. Change destination reuses the saved password; changing your password affects future archives only. Keep the password in a separate password manager: it is required to restore a backup on another Mac. LabMate remembers it locally using macOS-protected secure storage, but that local secret is deliberately excluded from backups.
 
-Once configured, LabMate creates a daily backup while open and catches up at the next launch. Back up now creates an additional snapshot. Snapshots include records, preferences, Trash, and referenced managed attachments. The application retains the newest seven local encrypted snapshots; destination backups remain until you remove them.
+Once configured, LabMate creates a daily backup while open and catches up at the next launch. Back up now creates an additional snapshot. Snapshots include records, preferences, Trash, experiment citations with saved bibliographic metadata, and referenced managed attachments. The application retains the newest seven local encrypted snapshots; destination backups remain until you remove them.
 
 This release bounds backups to 2 GiB of archive/expanded data, 1 GiB per included file (including the database), and 10,000 archive entries. A library exceeding these limits is rejected with an error; a partial archive is never reported as a successful backup. Files can remain attached even when they exceed preview or backup limits. Keep separate copies of oversized data and check backup status before relying on protection.
 
@@ -33,6 +33,14 @@ Save current edits first, then use Restore backup in Settings. Choose a complete
 LabMate authenticates the encrypted archive, validates its file paths and hashes, checks the database, and preserves the current library for rollback before switching. A wrong password, damaged archive, missing attachment, or unsupported newer schema is rejected. Do not remove staging or recovery files during an interrupted restore: startup recovery needs them.
 
 After a successful restore, LabMate closes the old editors, returns to the notebook directory, and applies the restored appearance and layout. Open a notebook to inspect its restored contents before continuing work.
+
+Version 0.5.0 accepts authenticated schema 1–4 archives and migrates older
+supported databases transactionally to schema 4. Restored citations are shared
+by every run of their experiment and work offline. Pending citation operations
+and open pickers are reset during restore. Zotero's connection preference is
+local configuration, excluded from the archive; live browsing is revalidated.
+A reference originating from another Zotero database keeps its saved metadata
+and cannot silently refresh from the currently running database.
 
 Pre-restore copies are retained under the working library's `rollback/rollback-*` folders. Each contains a consistent `library.sqlite` and its `objects` directory. Prefer restoring an earlier encrypted archive through Settings. If manual rollback is needed, quit LabMate first, preserve a complete copy of the current library, and recover the database and objects together from one rollback folder into a separate library for inspection. Do not mix databases and attachment directories from different snapshots or overwrite a running library.
 
@@ -56,4 +64,4 @@ Replace the application path with the review build's actual path. The applicatio
 
 ## Deferred services
 
-Zotero, Google Docs, live cloud synchronization, shared accounts, scientific file viewers, signing, and notarization are separate milestones. No credentials for those services are required to use the local notebook.
+Google Docs, live cloud synchronization, shared accounts, scientific file viewers, signing, and notarization are separate milestones. No credentials for those services are required to use the local notebook. The implemented Zotero desktop integration uses read-only local access; see `ZOTERO.md`.

@@ -116,7 +116,7 @@ async function encryptedEnvelope(zipPath, outputPath, password, overrides = {}) 
     nonce: nonce.toString('base64'),
     archiveBytes: archiveBytes.length,
     tagBytes: TAG_BYTES,
-    schemaVersion: overrides.schemaVersion === undefined ? 3 : overrides.schemaVersion,
+    schemaVersion: overrides.schemaVersion === undefined ? 4 : overrides.schemaVersion,
     createdAt: overrides.createdAt || new Date().toISOString(),
   };
   const headerBuffer = Buffer.from(JSON.stringify(header), 'utf8');
@@ -163,7 +163,7 @@ async function validManifestAndDatabase(fixture, objectHash, objectBytes) {
     databaseBytes,
     manifest: {
       formatVersion: 1,
-      schemaVersion: 3,
+      schemaVersion: 4,
       createdAt: new Date().toISOString(),
       database: { name: 'library.sqlite', size: databaseBytes.length, sha256: hash(databaseBytes) },
       objects: [{ name: `objects/${objectHash}`, hash: objectHash, size: objectBytes.length }],
@@ -271,7 +271,7 @@ test('rejects a SQLite foreign-key violation before switching the current librar
   const mutatedDatabase = fs.readFileSync(databasePath);
   const manifest = {
     formatVersion: 1,
-    schemaVersion: 3,
+    schemaVersion: 4,
     createdAt: new Date().toISOString(),
     database: { name: 'library.sqlite', size: mutatedDatabase.length, sha256: hash(mutatedDatabase) },
     objects: [{ name: `objects/${fixture.objectHash}`, hash: fixture.objectHash, size: fixture.objectBytes.length }],
@@ -303,7 +303,7 @@ test('rejects an unsupported stored document schema before switching the current
   const databaseBytes = fs.readFileSync(databasePath);
   const manifest = {
     formatVersion: 1,
-    schemaVersion: 3,
+    schemaVersion: 4,
     createdAt: new Date().toISOString(),
     database: { name: 'library.sqlite', size: databaseBytes.length, sha256: hash(databaseBytes) },
     objects: [{ name: `objects/${fixture.objectHash}`, hash: fixture.objectHash, size: fixture.objectBytes.length }],
@@ -327,7 +327,7 @@ test('rejects a future schema and cleans staging after cancellation', async t =>
   const envelope = readEnvelope(backupFile(fixture, created));
   const future = path.join(fixture.root, 'backups', 'future.labmatebackup');
   const futureBytes = Buffer.from(envelope.bytes);
-  const futureHeader = Buffer.from(JSON.stringify({ ...envelope.header, schemaVersion: 4 }), 'utf8');
+  const futureHeader = Buffer.from(JSON.stringify({ ...envelope.header, schemaVersion: 9 }), 'utf8');
   assert.equal(futureHeader.length, envelope.headerLength);
   futureHeader.copy(futureBytes, envelope.headerStart);
   fs.writeFileSync(future, futureBytes);
@@ -474,13 +474,14 @@ test('recovers an interrupted restore journal before reopening the library', asy
   }
 });
 
-test('authenticated schema 1 backup restores into schema 3 and migrates its palette after validation', async t => {
+test('authenticated schema 1 backup restores into schema 4 and migrates its palette after validation', async t => {
   const fixture = setup(t);
   const service = serviceFor(fixture);
   const objectBytes = fs.readFileSync(path.join(fixture.root, 'objects', fixture.objectHash));
   const legacy = await validManifestAndDatabase(fixture, fixture.objectHash, objectBytes);
   const database = new BetterSqlite3(legacy.databasePath);
   database.exec('ALTER TABLE preferences DROP COLUMN palette');
+  database.exec('DROP TABLE IF EXISTS experiment_citations');
   database.pragma('user_version = 1');
   database.close();
   const bytes = fs.readFileSync(legacy.databasePath);
@@ -492,7 +493,7 @@ test('authenticated schema 1 backup restores into schema 3 and migrates its pale
   ], {schemaVersion: 1});
   value(fixture.store.dispatch('preferences.update', {palette: 'rose'}));
   const snapshot = await service.restore({source, password: 'correct horse', jobId: 'legacy-restore'});
-  assert.equal(snapshot.schemaVersion, 3);
+  assert.equal(snapshot.schemaVersion, 4);
   assert.equal(snapshot.preferences.palette, 'sage');
   assert.equal(snapshot.runs.length, 1);
   assert.equal(fixture.store.db.pragma('integrity_check', {simple: true}), 'ok');
@@ -520,24 +521,44 @@ test('authenticated schema 2 backup retains all preferences and records through 
   await assert.rejects(serviceFor(fixture).restore({source, password: 'wrong password'}), error => error.code === 'CORRUPT_BACKUP');
   assert.deepEqual(fixture.store.snapshot(), current);
   const snapshot = await serviceFor(fixture).restore({source, password: 'correct horse', jobId: 'legacy-v2-restore'});
-  assert.deepEqual(snapshot, before);
-  assert.equal(fixture.store.db.pragma('user_version', {simple: true}), 3);
+  assert.notEqual(snapshot.libraryGeneration, before.libraryGeneration);
+  assert.deepEqual(snapshot, {...before, libraryGeneration: snapshot.libraryGeneration});
+  assert.equal(fixture.store.db.pragma('user_version', {simple: true}), 4);
   assert.equal(fixture.store.db.pragma('integrity_check', {simple: true}), 'ok');
   value(fixture.store.dispatch('preferences.update', {palette: 'midnight'}));
 });
 
-test('schema 3 Midnight Purple survives an encrypted backup and restore', async t => {
+test('authenticated schema 3 archive without citation tables restores and migrates losslessly', async t => {
+  const fixture = setup(t);
+  const before = fixture.store.snapshot();
+  const legacy = await validManifestAndDatabase(fixture, fixture.objectHash, fixture.objectBytes);
+  const database = new BetterSqlite3(legacy.databasePath);
+  database.exec('DROP TABLE experiment_citations');
+  database.pragma('user_version = 3'); database.close();
+  const bytes = fs.readFileSync(legacy.databasePath);
+  const manifest = {...legacy.manifest, schemaVersion: 3, database: {...legacy.manifest.database, size: bytes.length, sha256: hash(bytes)}};
+  const source = await craftedBackup(fixture, 'legacy-v3.labmatebackup', [
+    {name:'manifest.json',data:JSON.stringify(manifest)}, {name:'library.sqlite',data:bytes},
+    {name:`objects/${fixture.objectHash}`,data:fixture.objectBytes},
+  ], {schemaVersion:3});
+  const restored = await serviceFor(fixture).restore({source,password:'correct horse'});
+  assert.deepEqual(restored, {...before, libraryGeneration:restored.libraryGeneration});
+  assert.equal(restored.schemaVersion,4);
+});
+
+test('schema 4 Midnight Purple survives an encrypted backup and restore', async t => {
   const fixture = setup(t);
   value(fixture.store.dispatch('preferences.update', {appearance: 100, palette: 'midnight'}));
   const expected = fixture.store.snapshot();
   const service = serviceFor(fixture);
   const created = await service.create({password: 'correct horse'});
   const source = backupFile(fixture, created);
-  assert.equal(readEnvelope(source).header.schemaVersion, 3);
+  assert.equal(readEnvelope(source).header.schemaVersion, 4);
   value(fixture.store.dispatch('preferences.update', {appearance: 0, palette: 'sage'}));
-  assert.deepEqual(await service.restore({source, password: 'correct horse'}), expected);
+  const restored = await service.restore({source, password: 'correct horse'});
+  assert.deepEqual(restored, {...expected, libraryGeneration: restored.libraryGeneration});
   fixture.store.close(); fixture.store.reopen();
-  assert.deepEqual(fixture.store.snapshot(), expected);
+  assert.deepEqual(fixture.store.snapshot(), {...expected, libraryGeneration: fixture.store.libraryGeneration});
 });
 
 test('schema 2 backup cannot claim the schema 3 Midnight Purple palette', async t => {

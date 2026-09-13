@@ -1,7 +1,10 @@
 # LabMate functional application handoff
 
-Updated September 9, 2026. Version 0.4.3 builds on commit `ec51ff7` (dictation fix).
-These feature changes are in the working tree, uncommitted and unpublished.
+Updated September 12, 2026. Version 0.5.0 adds a working read-only Zotero
+integration with experiment-wide citations, offline references in every export,
+and schema-4 backup/recovery. Integration changes are committed locally; the
+concurrent white export pass remains a separate working-tree change. Read
+`ZOTERO.md` for setup, supported behavior and live acceptance boundaries.
 Preserve the frontend, seven-palette appearance continuum, and local-first
 architecture. Read `BACKEND-CONTRACT.md` before changing subsystem interfaces.
 See `VALIDATION.md` for the evidence and remaining live acceptance checks.
@@ -61,7 +64,9 @@ Appearance offers Original Sage, Ocean, Lavender, Terracotta, Rose, Graphite and
 All seven preserve the 0–100 slider and semantic notebook/status colors. Schema 3
 adds Midnight Purple to the saved palette choices. Schema 1 libraries migrate to
 Original Sage; schema 2 libraries keep their saved palette and brightness.
-Authenticated backups from schemas 1, 2 and 3 are supported; future schemas are rejected.
+Authenticated backups from schemas 1–4 are supported; future schemas are rejected.
+Schema 4 adds experiment citations without changing palette choices. All runs
+of an experiment share its references; a new independent experiment starts empty.
 
 Integrated dictation uses a bundled Swift helper with Apple's SpeechAnalyzer
 and SpeechTranscriber on macOS 26+. The helper exposes capabilities and language
@@ -91,6 +96,23 @@ report unavailable previews. PDF attachments use captions in exports. Raster
 images and spreadsheet tables have richer output where supported. Markdown
 writes relative companion assets. Aggregate export limits are 128 MiB of
 raster data and 100,000 spreadsheet cells, with caption fallback warnings.
+
+The September 12 white export pass adds a shared presentation specification in
+`electron/backend/export-design.cjs`: separate entry code/title/metadata,
+numbered selected sections, neutral tables and supporting blocks, proportional
+figures, and new pages for subsequent entries in DOCX/RTF/printed HTML. HTML
+uses the native sans-serif stack; DOCX/RTF use portable Arial and Courier New.
+Markdown and TXT carry the same information hierarchy within their format limits.
+Application palette and brightness do not affect generated page styling;
+authored highlights and scientific image colors remain intact. Very wide rich
+tables fall back to labeled rows with an explicit warning. Selection, atomic
+file replacement, cancellation and attachment policies retain their existing
+contracts. This pass adds no database migration or dependency.
+
+See `EXPORT-DESIGN-PLAN.md` and the white-export section in `VALIDATION.md`.
+The export review build was isolated from concurrent Zotero integration edits;
+its acceptance does not establish acceptance of that integration. Native
+Word/Pages/TextEdit and Windows rendering remain manual acceptance items.
 
 ## Backups and recovery
 
@@ -130,6 +152,7 @@ deletion does not erase older backup or rollback copies. See `RECOVERY.md`.
 | `electron/main.cjs`, `electron/preload.cjs` | Sandboxed bridge, frame/payload validation, native pickers, safeStorage, scheduling and close flush |
 | `electron/backend/worker.cjs` | Dedicated utility process, serial mutation queue, progress/cancellation |
 | `electron/backend/schema.cjs` | Version-specific required columns and palette IDs |
+| `electron/zotero.cjs`, `shared/citations.cjs`, `src/ZoteroPanel.tsx` | Read-only desktop connection, source-bound citation metadata, experiment picker and refresh |
 | `electron/dictation.cjs`, `native/speech/main.swift` | Session-scoped speech helper, permissions, audio and transcript lifecycle |
 | `shared/yield.cjs`, `src/YieldCalculation.tsx` | Shared deterministic calculation and legacy persisted editor card |
 | `shared/material-yield.cjs`, `src/MaterialYield.tsx` | Material parser, semantic highlights, manual fallback and Copy Yield |
@@ -186,8 +209,9 @@ notarization remain separate manual/distribution checks.
 
 ## Deferred controls
 
-Zotero and Google Docs integration, scientific viewers, public
-signing/notarization, Intel packaging and updates remain deferred. Future
-citation associations have a separate storage table but no live picker/API.
+Google Docs integration, scientific viewers, public signing/notarization,
+Intel packaging and updates remain deferred. Zotero-side Send to LabMate,
+inline citations, styles and PDF/annotation import remain future extensions;
+the basic LabMate-side Zotero picker and experiment associations work now.
 No hosted backend, live cloud sync, multiuser access, electronic signatures or
 regulated-lab compliance claims are included. See `integration-notes.md`.

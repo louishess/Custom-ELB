@@ -22,7 +22,7 @@ export type Experiment = ExperimentRecord;
 export type Notebook = NotebookRecord;
 export type Scheme = SchemeRecord;
 
-export type SettingsTab = 'general' | 'backups' | 'trash';
+export type SettingsTab = 'general' | 'backups' | 'trash' | 'integrations';
 
 export type Panel =
   | { kind: 'settings'; tab?: SettingsTab }
@@ -33,7 +33,7 @@ export type Panel =
   | { kind: 'export'; scope: 'entry' | 'selected' | 'notebook' }
   | { kind: 'scheme'; schemeId?: string }
   | { kind: 'metadata'; target: 'notebook' | 'experiment' | 'run' }
-  | { kind: 'citations' };
+  | { kind: 'citations'; experimentId?: string; citationId?: string };
 
 export type AppMode = 'real' | 'demo';
 export type SnapshotState =

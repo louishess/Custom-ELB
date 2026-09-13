@@ -127,7 +127,7 @@ async function exported(store, run, format) {
   return { model, text: format === 'docx' ? await (await JSZip.loadAsync(result.bytes)).file('word/document.xml').async('string') : result.bytes.toString('utf8') };
 }
 
-test('all exports retain one role label across formatting splits and rich formats preserve distinct highlights', async t => {
+test('all exports retain one role label across formatting splits and rich formats preserve distinct neutral role highlights', async t => {
   const { store, run } = setup(t);
   value(save(store, run, materialDocuments(run)));
   for (const format of ['txt', 'md', 'html', 'rtf', 'docx']) {
@@ -138,19 +138,19 @@ test('all exports retain one role label across formatting splits and rich format
     assert.ok(!result.model.warnings.some(item => item.includes('yieldMaterial')));
     assert.doesNotMatch(result.text, /starting-material|product-material/, 'internal selection identifiers are not exported');
     if (format === 'html') {
-      assert.match(result.text, /title="Starting material" style="background-color:#d5efd8"/);
-      assert.match(result.text, /title="Product" style="background-color:#d6e6ff"/);
+      assert.match(result.text, /title="Starting material" style="background-color:#ededed"/);
+      assert.match(result.text, /title="Product" style="background-color:#dedede"/);
       assert.match(result.text, /Product &lt;sample&gt;/);
       assert.doesNotMatch(result.text, /<sample>/);
       assert.doesNotMatch(result.text, /background-color:#ff0000/);
     } else if (format === 'rtf') {
-      assert.match(result.text, /\\red213\\green239\\blue216/);
-      assert.match(result.text, /\\red214\\green230\\blue255/);
-      assert.match(result.text, /\\highlight1/);
-      assert.match(result.text, /\\highlight2/);
+      assert.match(result.text, /\\red237\\green237\\blue237/);
+      assert.match(result.text, /\\red222\\green222\\blue222/);
+      assert.match(result.text, /\\highlight5/);
+      assert.match(result.text, /\\highlight6/);
     } else if (format === 'docx') {
-      assert.match(result.text, /w:fill="D5EFD8"/);
-      assert.match(result.text, /w:fill="D6E6FF"/);
+      assert.match(result.text, /w:fill="EDEDED"/);
+      assert.match(result.text, /w:fill="DEDEDE"/);
     }
   }
 });

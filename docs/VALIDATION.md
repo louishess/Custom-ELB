@@ -1,3 +1,109 @@
+# LabMate 0.5.0 Zotero acceptance — September 12, 2026
+
+The basic Zotero integration is implemented: a local read-only library picker,
+experiment-wide citations shared by all runs, reviewed metadata refresh,
+offline references in all five exports, and schema-4 encrypted backup/recovery.
+The final combined arm64 review app preserves the concurrent white export work.
+The historical isolated export report below describes a different artifact.
+
+- App: `out/LabMate-darwin-arm64/LabMate.app`
+- ZIP: `artifacts/LabMate-0.5.0-macOS-arm64.zip`
+- Setup and compatibility: `ZOTERO.md`
+- Fixture workflow evidence and four screenshots: `artifacts/zotero/`
+- Live report: `artifacts/zotero/live-checks.json`
+- Package hashes/source comparison: `artifacts/zotero/release-manifest.json`
+
+| Check | Result |
+| --- | --- |
+| TypeScript, desktop syntax, Vite, native helper and arm64 package | Passed |
+| Backend, migrations, recovery, bridge, transport and exports | 157 passed, zero failures/skips |
+| Final packaged native SQLite and encrypted recovery smoke | 2 passed |
+| Packaged citation fixture workflows | 8 passed; zero renderer errors |
+| Packaged existing functional workflows | 12 passed |
+| Packaged existing UI workflows | 13 passed |
+| Appearance continuum | All 707 palette/brightness combinations passed; minimum contrast 4.50:1 |
+| Authorized live Zotero acceptance | 5 passed against running build `11.0.SOURCE.1e4dabc91` |
+
+Live acceptance enabled Zotero's local application access with the user's
+explicit permission and read one existing personal-library reference. The
+packaged UI connected, added/refreshed the reference, shared it with a new run,
+retained it after disconnect/restart, exported all five formats offline, and
+restored it through Settings from an encrypted archive. All LabMate records,
+exports and recovery files were disposable and removed. No Zotero item or
+working LabMate experiment was changed. Zotero's approved access setting remains
+enabled. The report contains no item identifiers, titles or bibliography.
+
+Groups, nested collections, list pagination, missing items, source changes,
+disabled access and cancellation use controlled fixtures. Compatibility with
+other running Zotero builds is not implied by the one-client live result.
+References retain metadata snapshots rather than silently tracking Zotero edits.
+
+Schema 1–3 restore tests use actual old tables without the new citation table;
+schema 4 validates bibliographic data before replacement. A regression check
+verifies that disconnect cancels a citation mutation queued behind another job.
+Narrow Midnight Purple screenshots and keyboard selection were inspected.
+
+The application remains a local Apple Silicon review build. Developer ID
+signing/notarization, clean-Mac installation, real Box cloud upload/download
+and other previously recorded distribution checks remain separate milestones.
+
+---
+
+# LabMate white export validation — September 12, 2026
+
+The five existing writers now share LabMate's entry-code/title/metadata composition,
+numbered sections and reading order. HTML, DOCX and RTF use a fixed white/neutral
+document scheme with deliberate typography, tables, supporting blocks and page
+layout. Markdown and TXT retain the structure within their format capabilities.
+Figures retain their proportions; authored highlights and scientific image colors
+are preserved. No dependency or database change was introduced by this pass.
+
+This local Apple Silicon review build uses the committed `c72c282` application
+baseline plus the white export changes. Zotero/citation integration was being
+edited concurrently in the shared workspace. Its transient full-suite failures
+were not counted as export acceptance; its schema, bridge, frontend and References
+section changes are excluded from this isolated build. Export source changes remain
+in the live workspace alongside that work. The review app retains version 0.4.3;
+it is not a combined release or a notarized distribution build.
+
+- App: `artifacts/exports/review-build/LabMate.app`
+- ZIP: `artifacts/exports/LabMate-white-exports-macOS-arm64.zip`
+- Source/archive hashes and build scope: `artifacts/exports/review-build/manifest.json`
+- Final examples: `artifacts/exports/entry.{html,docx,rtf,md,txt}` and `notebook.{html,docx,rtf,md,txt}`
+- Historical specimens for comparison: `artifacts/exports/baseline/`
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| TypeScript, desktop syntax, Vite, Swift helper and arm64 package | Passed on isolated review source | `artifacts/exports/review-build/export-build.txt`, `export-package.txt` |
+| Backend and packaged tests | 139 passed; zero failures/skips | `artifacts/exports/review-build/export-backend-tests.txt` |
+| New presentation regression coverage | 7 tests passed, including 7 palettes at both brightness endpoints across all 3 rich formats | `tests/export-design.test.cjs`, `artifacts/exports/review-build/export-focused-tests.txt` |
+| Packaged functional workflows | 12 passed, including real files in all 5 formats and restart/restore | `artifacts/exports/review-build/functional/checks.json`, `export-functional.txt` |
+| Packaged existing UI workflows | 13 passed | `artifacts/exports/review-build/ui/checks.json`, `export-ui.txt` |
+| HTML browser layout | White page, 2:1 desktop title/body ratio, image proportions, 390px layout, Letter/A4 PDF generation and zero external requests passed | `artifacts/exports/layout-checks.json`, `*-screen.png`, `*-narrow.png`, `*-Letter.pdf`, `*-A4.pdf` |
+| DOCX visual review | All 5 final notebook pages reviewed through bundled LibreOffice; entry specimen also reviewed | `artifacts/exports/render-docx-final/`, `render-entry/` |
+| RTF visual review | All 6 final notebook pages reviewed through bundled LibreOffice; table continuation and fresh-entry page breaks verified | `artifacts/exports/render-rtf-final/` |
+| Packaged exporter freshness | Byte-for-byte match to the isolated final source, including the RTF page-break fix | `artifacts/exports/review-build/manifest.json` |
+
+Visual review resolved two implementation details. Portable Arial and Courier New
+keep sans-serif/monospace substitution in the available reader without Apple fonts;
+HTML keeps the native system stack. Very wide rich tables use labeled rows and an
+explicit warning when any fitted column would fall below 40 CSS pixels. The fallback
+preserves every original cell once, including span/header context. Existing merged
+table, material, yield, cancellation, overwrite and attachment-limit tests pass.
+
+All app checks used disposable libraries and profiles. The user's working library
+and cloud account were not used. Native Word inspection was attempted but computer-use
+screen capture failed; native Word, Pages, TextEdit and Windows rendering are still
+unverified. LibreOffice renders and macOS text readback do not establish acceptance
+in those readers. Fonts, pagination and running headers can vary by reader.
+
+Regenerate specimens with `node scripts/check-exports.mjs`. Check browser layout
+with `LABMATE_CHROMIUM='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' node scripts/check-export-layout.mjs`;
+the checker launches a disposable headless browser. Revalidate the combined app
+after the concurrent Zotero work is integrated.
+
+---
+
 # LabMate 0.4.3 Midnight Purple validation
 
 Verified 2026-09-10T00:16:51.514950+00:00. Local Apple Silicon review build on `ec51ff7`; changes remain uncommitted and unpublished.

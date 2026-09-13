@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
 const { yieldSummary } = require('../../shared/yield.cjs');
+const { DESIGN, twips, contentWidth, sectionLabel, metadata, notebookContext, fitColumns, fitImage, htmlStyles } = require('./export-design.cjs');
 
 let docx;
 try {
@@ -259,7 +260,7 @@ function normalizeDocNode(node, state, depth = 0) {
   // readable paragraphs through the same writers used for ordinary prose.
   if (rawType === 'yieldCalculation') {
     state.lastMaterialKey = null;
-    return { type: 'doc', content: yieldSummary(node.attrs).map(text => ({ type: 'paragraph', content: [{ type: 'text', text: safeText(text) }] })) };
+    return { type: 'doc', presentation: 'yield-summary', content: yieldSummary(node.attrs).map((text, index) => ({ type: 'paragraph', content: [{ type: 'text', text: safeText(text), ...(index === 0 ? {marks:[{type:'bold'}]} : {}) }] })) };
   }
   const knownTypes = new Set([
     'doc', 'paragraph', 'heading', 'blockquote', 'bullet_list', 'ordered_list', 'list_item',
@@ -284,7 +285,7 @@ function normalizeDocNode(node, state, depth = 0) {
   if (beginsMaterial) normalized.text = `[${material.attrs.role === 'starting' ? 'Starting material' : 'Product'}] ${normalized.text || ''}`;
   const attrs = {};
   if (type === 'heading') attrs.level = clampInteger(node.attrs?.level, 1, 6, 2);
-  if (type === 'ordered_list') attrs.order = clampInteger(node.attrs?.order, 1, 999999, 1);
+  if (type === 'ordered_list') attrs.order = clampInteger(node.attrs?.start ?? node.attrs?.order, 1, 999999, 1);
   if (node.attrs && typeof node.attrs === 'object') {
     if (type === 'text' || type === 'paragraph' || type === 'heading' || type === 'table_cell' || type === 'table_header') {
       if (typeof node.attrs.colspan === 'number') attrs.colspan = clampInteger(node.attrs.colspan, 1, MAX_DOC_NODES, 1);
@@ -318,7 +319,7 @@ function normalizeDocNode(node, state, depth = 0) {
           return null;
         }
         return { type: 'highlight', attrs: {
-          color: mark.attrs.role === 'starting' ? '#d5efd8' : '#d6e6ff',
+          color: mark.attrs.role === 'starting' ? DESIGN.starting : DESIGN.product,
           materialRole: mark.attrs.role,
         } };
       }
@@ -549,6 +550,21 @@ async function resolveExportDocument(store, fileService, input, context = {}) {
       title: SECTION_TITLES[id],
       document: normalizeDocument(run.documents?.[id], { losses, nodes: 0 }),
     }));
+    const references = (snapshot.citations || []).filter(citation => citation.experimentId === experiment.id);
+    if (references.length) {
+      const {referenceText, safeURL} = require('../../shared/citations.cjs');
+      const paragraphs = references.map(citation => {
+        const label = referenceText(citation.snapshot);
+        const url = safeURL(citation.snapshot.doi
+          ? `https://doi.org/${citation.snapshot.doi.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')}`
+          : citation.snapshot.url);
+        const content = url && label.endsWith(url)
+          ? [{type: 'text', text: label.slice(0, -url.length)}, {type: 'text', text: url, marks: [{type: 'link', attrs: {href: url}}]}]
+          : [{type: 'text', text: label}];
+        return {type: 'paragraph', content: content.filter(node => node.text)};
+      });
+      sections.push({id: 'references', title: 'References', document: normalizeDocument({type: 'doc', content: paragraphs}, {losses, nodes: 0})});
+    }
     const resolvedAttachments = request.sections.includes('data') && request.data !== 'none'
       ? (entryAttachments.get(run.id) || []).map(item => ({ ...item })) : [];
     if (request.data === 'previews' && request.sections.includes('data')) {
@@ -704,6 +720,26 @@ function tableLayout(node) {
   return { grid, placements, width, columnWidths: Array.from({ length: width }, (_, i) => columnWidths[i] || null) };
 }
 
+function styledTable(node, model) {
+  const layout = tableLayout(node);
+  const fitted = fitColumns(layout.columnWidths);
+  if (fitted.readable) return { ...layout, columnWidths: fitted.widths };
+  const message = 'A wide table was rendered as labeled rows to keep every cell readable; original row/column spans are stated in the labels.';
+  makeWarning(message, model.warnings);
+  const content = [{ type: 'paragraph', content: [{ type: 'text', text: message }] }];
+  layout.placements.forEach((row, rowIndex) => row.forEach(({ cell, column, colspan, rowspan }) => {
+    const label = `Row ${rowIndex + 1}, column ${column + 1}${colspan > 1 ? `–${column + colspan}` : ''}${rowspan > 1 ? ` (spans ${rowspan} rows)` : ''}${cell.type === 'table_header' ? ' · Header' : ''}`;
+    content.push({ type: 'paragraph', content: [{ type: 'text', text: label, marks: [{type:'bold'}] }] }, ...nodeChildren(cell).map(child => ['text','hard_break'].includes(child.type) ? {type:'paragraph',content:[child]} : child));
+  }));
+  return { ...layout, fallback: { type: 'doc', content } };
+}
+
+function sheetTable(sheet) {
+  const rows = sheet.rows || [];
+  const width = Math.max(1, ...rows.map(row => row.length));
+  return { type: 'table', content: rows.map((row, index) => ({ type: 'table_row', content: Array.from({length:width}, (_, column) => ({type:index === 0 ? 'table_header' : 'table_cell',content:[{type:'paragraph',content:[{type:'text',text:row[column] || ''}]}]})) })) };
+}
+
 function renderPlainBlocks(node, indent = '') {
   if (!node) return [];
   const children = nodeChildren(node);
@@ -717,9 +753,9 @@ function renderPlainBlocks(node, indent = '') {
     const lines = [];
     children.filter(child => child.type === 'list_item').forEach((item, index) => {
       const nested = renderPlainBlocks(item, indent + '  ');
-      if (!nested.length) lines.push(`${indent}${node.type === 'ordered_list' ? `${index + 1}.` : '-'} `);
+      if (!nested.length) lines.push(`${indent}${node.type === 'ordered_list' ? `${index + (node.attrs?.order || 1)}.` : '-'} `);
       else {
-        const marker = node.type === 'ordered_list' ? `${index + 1}. ` : '- ';
+        const marker = node.type === 'ordered_list' ? `${index + (node.attrs?.order || 1)}. ` : '- ';
         lines.push(indent + marker + nested[0].trimStart());
         lines.push(...nested.slice(1));
       }
@@ -738,13 +774,11 @@ function renderPlainInline(node) {
 }
 
 function renderEntryPlain(entry, model, lines) {
-  lines.push(`${entry.code} — ${entry.title}`);
-  lines.push(`Date: ${entry.date}`);
-  lines.push(`Author: ${entry.author}`);
-  lines.push(`Experiment: ${entry.experiment.label}`);
+  lines.push(`[${entry.code}]`, entry.title, '');
+  lines.push(...metadata(entry).map(([label, value]) => `${label}: ${value}`));
   lines.push('');
-  for (const section of entry.sections) {
-    lines.push(section.title.toUpperCase());
+  for (const [index, section] of entry.sections.entries()) {
+    lines.push(sectionLabel(section, index));
     lines.push(...renderPlainBlocks(section.document));
     if (section.id === 'data' && entry.attachments.length) {
       lines.push('Attachments:');
@@ -755,10 +789,10 @@ function renderEntryPlain(entry, model, lines) {
 }
 
 function renderPlain(model) {
-  const lines = [model.notebook.name, model.notebook.discipline, ''];
+  const lines = [`LabMate · ${model.notebook.name}`, notebookContext(model), ''].filter((line, index) => line || index === 2);
   model.entries.forEach((entry, index) => {
     renderEntryPlain(entry, model, lines);
-    if (index !== model.entries.length - 1) lines.push('='.repeat(72), '');
+    if (index !== model.entries.length - 1) lines.push('─'.repeat(32), '');
   });
   return Buffer.from(lines.join('\n').replace(/[ \t]+\n/g, '\n').trimEnd() + '\n', 'utf8');
 }
@@ -792,46 +826,46 @@ function renderMarkdownInline(node) {
 function renderMarkdownBlocks(node, depth = 0) {
   if (!node) return [];
   const children = nodeChildren(node);
-  if (node.type === 'doc') return children.flatMap(child => renderMarkdownBlocks(child, depth));
-  if (node.type === 'paragraph' || node.type === 'blockquote' || node.type === 'code_block' || node.type === 'unsupported') {
-    const text = node.type === 'code_block' ? `    ${inlineText(node).replace(/\n/g, '\n    ')}` : node.type === 'blockquote' ? `> ${renderMarkdownInline(node)}` : renderMarkdownInline(node);
-    return [text];
+  if (node.type === 'doc') return children.flatMap(child => [...renderMarkdownBlocks(child, depth), '']);
+  if (node.type === 'paragraph' || node.type === 'unsupported') return [renderMarkdownInline(node)];
+  if (node.type === 'blockquote') return children.flatMap(child => [...renderMarkdownBlocks(child, depth), '']).map(line => `> ${line}`);
+  if (node.type === 'code_block') {
+    const value = inlineText(node);
+    const runs = value.match(/`+/g) || [];
+    const fence = '`'.repeat(Math.max(3, ...runs.map(run => run.length + 1)));
+    return [fence, ...value.split('\n'), fence];
   }
-  if (node.type === 'heading') {
-    const level = clampInteger(node.attrs?.level, 1, 6, 2);
-    return [`${'#'.repeat(level)} ${renderMarkdownInline(node)}`];
-  }
+  if (node.type === 'heading') return [`${'#'.repeat(Math.min(6, (node.attrs?.level || 2) + 3))} ${renderMarkdownInline(node)}`];
   if (node.type === 'horizontal_rule') return ['---'];
   if (node.type === 'bullet_list' || node.type === 'ordered_list') {
-    const rows = [];
-    children.filter(child => child.type === 'list_item').forEach((item, index) => {
-      const nested = renderMarkdownBlocks(item, depth + 1);
-      if (!nested.length) nested.push('');
-      const marker = node.type === 'ordered_list' ? `${index + 1}. ` : '- ';
-      rows.push('  '.repeat(depth) + marker + nested[0]);
-      rows.push(...nested.slice(1).map(line => '  '.repeat(depth + 1) + line));
+    return children.filter(child => child.type === 'list_item').flatMap((item,index) => {
+      const marker = node.type === 'ordered_list' ? `${index + (node.attrs?.order || 1)}. ` : '- ';
+      const output = [];
+      nodeChildren(item).forEach((child, childIndex) => {
+        const lines = renderMarkdownBlocks(child, depth + 1);
+        if (!childIndex) output.push(marker + (lines.shift() || ''));
+        else if (!['bullet_list','ordered_list'].includes(child.type)) output.push('');
+        output.push(...lines.map(line => ' '.repeat(marker.length) + line));
+      });
+      return output;
     });
-    return rows;
   }
   if (node.type === 'list_item') return children.flatMap(child => renderMarkdownBlocks(child, depth));
   if (node.type === 'table') {
     const rows = tableRows(node);
     if (!rows.length) return [];
     const width = Math.max(...rows.map(row => row.length), 1);
-    const normalized = rows.map(row => Array.from({ length: width }, (_, index) => row[index] || ''));
-    return [
-      `| ${normalized[0].map(cell => escapeMarkdownText(cell).replace(/\|/g, '\\|')).join(' | ')} |`,
-      `| ${normalized[0].map(() => '---').join(' | ')} |`,
-      ...normalized.slice(1).map(row => `| ${row.map(cell => escapeMarkdownText(cell).replace(/\|/g, '\\|')).join(' | ')} |`),
-    ];
+    const normalized = rows.map(row => Array.from({length:width}, (_,index) => row[index] || ''));
+    return [`| ${normalized[0].map(escapeMarkdownText).join(' | ')} |`, `| ${normalized[0].map(()=>'---').join(' | ')} |`, ...normalized.slice(1).map(row=>`| ${row.map(escapeMarkdownText).join(' | ')} |`)];
   }
   return children.flatMap(child => renderMarkdownBlocks(child, depth));
 }
 
 function markdownAttachmentLines(entry, outputStem, assets) {
   if (!entry.attachments.length) return [];
-  const lines = ['### Attachments', ''];
+  const lines = ['#### Attachments', ''];
   entry.attachments.forEach(attachment => {
+    lines.push('');
     const preview = attachment.preview;
     const mime = imageMime(preview, attachment);
     if (preview?.kind === 'image' && preview.bytes && mime) {
@@ -846,7 +880,7 @@ function markdownAttachmentLines(entry, outputStem, assets) {
     } else if (preview?.kind === 'spreadsheet' && preview.sheets?.length) {
       lines.push(`- **${escapeMarkdownText(attachment.name)}**${attachment.caption ? ` — ${escapeMarkdownText(attachment.caption)}` : ''}`);
       for (const sheet of preview.sheets) {
-        lines.push('', `#### ${escapeMarkdownText(sheet.name)}`);
+        lines.push('', `##### ${escapeMarkdownText(sheet.name)}`);
         const rows = sheet.rows || [];
         if (rows.length) {
           const width = Math.max(...rows.map(row => row.length), 1);
@@ -865,11 +899,11 @@ function markdownAttachmentLines(entry, outputStem, assets) {
 
 function renderMarkdown(model) {
   const assets = [];
-  const lines = [`# ${escapeMarkdownText(model.notebook.name)}`, '', `_${escapeMarkdownText(model.notebook.discipline)}_`, ''];
+  const lines = ['LabMate', '', `# ${escapeMarkdownText(model.notebook.name)}`, '', escapeMarkdownText(notebookContext(model)), ''];
   model.entries.forEach((entry, index) => {
-    lines.push(`## ${escapeMarkdownText(entry.code)} — ${escapeMarkdownText(entry.title)}`, '', `- **Date:** ${escapeMarkdownText(entry.date)}`, `- **Author:** ${escapeMarkdownText(entry.author)}`, `- **Experiment:** ${escapeMarkdownText(entry.experiment.label)}`, '');
-    for (const section of entry.sections) {
-      lines.push(`### ${escapeMarkdownText(section.title)}`, '', ...renderMarkdownBlocks(section.document), '');
+    lines.push(escapeMarkdownText(`[${entry.code}]`), '', `## ${escapeMarkdownText(entry.title)}`, '', ...metadata(entry).map(([label,value]) => `- **${label}:** ${escapeMarkdownText(value)}`), '');
+    for (const [sectionIndex, section] of entry.sections.entries()) {
+      lines.push(`### ${escapeMarkdownText(sectionLabel(section, sectionIndex))}`, '', ...renderMarkdownBlocks(section.document), '');
       if (section.id === 'data') lines.push(...markdownAttachmentLines(entry, model.outputStem, assets), '');
     }
     if (index !== model.entries.length - 1) lines.push('---', '');
@@ -908,61 +942,68 @@ function htmlBlockStyle(node) {
   return node?.attrs?.align ? ` style="text-align:${node.attrs.align}"` : '';
 }
 
-function renderHtmlBlocks(node) {
+function renderHtmlBlocks(node, model) {
   if (!node) return '';
   const children = nodeChildren(node);
-  if (node.type === 'doc') return children.map(renderHtmlBlocks).join('');
+  const blocks = items => items.map(child => renderHtmlBlocks(child, model)).join('');
+  if (node.type === 'doc') {
+    const body = blocks(children);
+    return node.presentation === 'yield-summary' ? `<div class="yield-summary">${body}</div>` : body;
+  }
   if (node.type === 'paragraph' || node.type === 'unsupported') return `<p${htmlBlockStyle(node)}>${renderHtmlInline(node)}</p>`;
   if (node.type === 'heading') {
     const level = clampInteger(node.attrs?.level, 1, 6, 2);
-    return `<h${level}${htmlBlockStyle(node)}>${renderHtmlInline(node)}</h${level}>`;
+    const semantic = Math.min(6, level + (model.scope === 'entry' ? 2 : 3));
+    return `<h${semantic} class="content-heading level-${level}"${htmlBlockStyle(node)}>${renderHtmlInline(node)}</h${semantic}>`;
   }
-  if (node.type === 'blockquote') return `<blockquote>${children.map(renderHtmlBlocks).join('')}</blockquote>`;
+  if (node.type === 'blockquote') return `<blockquote>${blocks(children)}</blockquote>`;
   if (node.type === 'code_block') return `<pre><code>${escapeHtml(inlineText(node))}</code></pre>`;
   if (node.type === 'horizontal_rule') return '<hr>';
   if (node.type === 'bullet_list' || node.type === 'ordered_list') {
     const tag = node.type === 'bullet_list' ? 'ul' : 'ol';
-    return `<${tag}>${children.filter(item => item.type === 'list_item').map(item => `<li>${nodeChildren(item).map(renderHtmlBlocks).join('')}</li>`).join('')}</${tag}>`;
+    return `<${tag}${tag === 'ol' ? ` start="${node.attrs?.order || 1}"` : ''}>${children.filter(item => item.type === 'list_item').map(item => `<li>${blocks(nodeChildren(item))}</li>`).join('')}</${tag}>`;
   }
-  if (node.type === 'list_item') return children.map(renderHtmlBlocks).join('');
+  if (node.type === 'list_item') return blocks(children);
   if (node.type === 'table') {
-    const { placements, columnWidths } = tableLayout(node);
+    const { placements, columnWidths, fallback } = styledTable(node, model);
+    if (fallback) return `<div class="table-fallback">${renderHtmlBlocks(fallback, model)}</div>`;
     if (!placements.length) return '';
-    const columns = `<colgroup>${columnWidths.map(width => width ? `<col style="width:${width}px">` : '<col>').join('')}</colgroup>`;
-    return `<table>${columns}<tbody>${placements.map(row => `<tr>${row.map(({ cell, colspan, rowspan }) => {
+    const columns = `<colgroup>${columnWidths.map(width => `<col style="width:${width}px">`).join('')}</colgroup>`;
+    const rows = placements.map(row => `<tr>${row.map(({ cell, colspan, rowspan }) => {
       const tag = cell.type === 'table_header' ? 'th' : 'td';
-      const content = nodeChildren(cell).map(child => ['text', 'hard_break'].includes(child.type) ? renderHtmlInline(child) : renderHtmlBlocks(child)).join('');
+      const content = nodeChildren(cell).map(child => ['text', 'hard_break'].includes(child.type) ? renderHtmlInline(child) : renderHtmlBlocks(child, model)).join('');
       return `<${tag} colspan="${colspan}" rowspan="${rowspan}"${htmlBlockStyle(cell)}>${content}</${tag}>`;
-    }).join('')}</tr>`).join('')}</tbody></table>`;
+    }).join('')}</tr>`);
+    let headers = 0;
+    while (headers < placements.length && placements[headers].length && placements[headers].every(({cell}) => cell.type === 'table_header')) headers++;
+    if (placements.slice(0,headers).some((row,index) => row.some(slot => index + slot.rowspan > headers))) headers = 0;
+    return `<div class="table-wrap"><table style="width:${columnWidths.reduce((a,b)=>a+b,0)}px">${columns}${headers ? `<thead>${rows.slice(0,headers).join('')}</thead>` : ''}<tbody>${rows.slice(headers).join('')}</tbody></table></div>`;
   }
-  return children.map(renderHtmlBlocks).join('');
+  return blocks(children);
 }
 
-function htmlAttachmentMarkup(entry) {
+function htmlAttachmentMarkup(entry, model) {
   if (!entry.attachments.length) return '';
   const body = entry.attachments.map(attachment => {
     const preview = attachment.preview;
     const mime = imageMime(preview, attachment);
+    const caption = `${escapeHtml(attachment.name)}${attachment.caption ? ` — ${escapeHtml(attachment.caption)}` : ''}`;
     if (preview?.kind === 'image' && preview.bytes && mime) {
       const uri = `data:${mime};base64,${Buffer.from(preview.bytes).toString('base64')}`;
-      return `<figure><img src="${uri}" alt="${escapeHtml(attachment.caption || attachment.name)}"><figcaption>${escapeHtml(attachment.name)}${attachment.caption ? ` — ${escapeHtml(attachment.caption)}` : ''}</figcaption></figure>`;
+      return `<figure><img src="${uri}" alt="${escapeHtml(attachment.caption || attachment.name)}"><figcaption>${caption}</figcaption></figure>`;
     }
     if (preview?.kind === 'spreadsheet' && preview.sheets?.length) {
-      return `<section class="spreadsheet"><h4>${escapeHtml(attachment.name)}</h4>${preview.sheets.map(sheet => {
-        const rows = sheet.rows || [];
-        const width = Math.max(...rows.map(row => row.length), 1);
-        return `<h5>${escapeHtml(sheet.name)}</h5><table><tbody>${rows.map((row, rowIndex) => `<tr>${Array.from({ length: width }, (_, index) => `<${rowIndex === 0 ? 'th' : 'td'}>${escapeHtml(row[index] || '')}</${rowIndex === 0 ? 'th' : 'td'}>`).join('')}</tr>`).join('')}</tbody></table>`;
-      }).join('')}${attachment.caption ? `<p class="caption">${escapeHtml(attachment.caption)}</p>` : ''}</section>`;
+      return `<div class="spreadsheet"><h4 class="attachment-heading">${escapeHtml(attachment.name)}</h4>${preview.sheets.map(sheet => `<p class="caption">${escapeHtml(sheet.name)}</p>${renderHtmlBlocks(sheetTable(sheet), model)}`).join('')}${attachment.caption ? `<p class="caption">${escapeHtml(attachment.caption)}</p>` : ''}</div>`;
     }
-    return `<p class="attachment"><strong>${escapeHtml(attachment.name)}</strong>${attachment.caption ? ` — ${escapeHtml(attachment.caption)}` : ''}</p>`;
+    return `<p class="attachment">${caption}</p>`;
   }).join('');
-  return `<section class="attachments"><h3>Attachments</h3>${body}</section>`;
+  return `<div class="attachments"><h4 class="attachment-heading">Attachments</h4>${body}</div>`;
 }
 
 function renderHtml(model) {
-  const entries = model.entries.map(entry => `<article><h2>${escapeHtml(entry.code)} — ${escapeHtml(entry.title)}</h2><dl><dt>Date</dt><dd>${escapeHtml(entry.date)}</dd><dt>Author</dt><dd>${escapeHtml(entry.author)}</dd><dt>Experiment</dt><dd>${escapeHtml(entry.experiment.label)}</dd></dl>${entry.sections.map(section => `<section><h3>${escapeHtml(section.title)}</h3>${renderHtmlBlocks(section.document)}${section.id === 'data' ? htmlAttachmentMarkup(entry) : ''}</section>`).join('')}</article>`).join('<hr>');
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(model.notebook.name)}</title><style>body{font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20252a;max-width:900px;margin:3rem auto;padding:0 2rem}h1,h2,h3{line-height:1.2}article{margin:2.5rem 0}table{border-collapse:collapse;margin:1rem 0;max-width:100%;overflow:auto}th,td{border:1px solid #aeb5bb;padding:.35rem .55rem;text-align:left;vertical-align:top}figure{margin:1rem 0}img{max-width:100%;height:auto}figcaption,.caption{color:#59636c;font-size:.9rem}.attachments{margin-top:1rem}dt{font-weight:600;float:left;clear:left;width:6rem}dd{margin-left:6.5rem}</style></head><body><header><h1>${escapeHtml(model.notebook.name)}</h1><p>${escapeHtml(model.notebook.discipline)}</p></header>${entries}</body></html>`;
-  return Buffer.from(html, 'utf8');
+  const single = model.scope === 'entry';
+  const entries = model.entries.map(entry => `<article class="entry"><header class="entry-header"><span class="entry-code">${escapeHtml(entry.code)}</span><h${single ? 1 : 2} class="entry-title">${escapeHtml(entry.title)}</h${single ? 1 : 2}><div class="entry-metadata">${metadata(entry).map(([label,value]) => `<span><span class="metadata-label">${label}:</span> ${escapeHtml(value)}</span>`).join('')}</div></header>${entry.sections.map((section,index) => `<section class="export-section"><h${single ? 2 : 3} class="section-title"><span class="section-number">${String(index+1).padStart(2,'0')}</span>${escapeHtml(section.title)}</h${single ? 2 : 3}><div class="prose">${renderHtmlBlocks(section.document, model)}${section.id === 'data' ? htmlAttachmentMarkup(entry, model) : ''}</div></section>`).join('')}</article>`).join('');
+  return Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(model.notebook.name)}</title><style>${htmlStyles}</style></head><body><main class="labmate-export"><header class="export-context"><span class="wordmark">LabMate</span>${single ? escapeHtml(model.notebook.name) : `<h1 class="notebook-title">${escapeHtml(model.notebook.name)}</h1>`}${notebookContext(model) ? `<p class="notebook-context">${escapeHtml(notebookContext(model))}</p>` : ''}</header>${entries}</main></body></html>`, 'utf8');
 }
 
 function rtfEscape(value) {
@@ -1045,97 +1086,115 @@ function rtfAlignment(node) {
   return '';
 }
 
+function rtfParagraph(content, role = 'body', state = {}) {
+  const sizes = { body:DESIGN.body, title:DESIGN.title, notebook:DESIGN.notebook, section:DESIGN.section, small:DESIGN.small, caption:DESIGN.small, table:DESIGN.table, code:10, heading1:15, heading2:13.5, heading3:12, heading4:11, heading5:11, heading6:11 };
+  const heading = ['title','notebook','section'].includes(role) || role.startsWith('heading');
+  const small = ['small','caption'].includes(role);
+  const size = state.inTable ? DESIGN.table : (sizes[role] || DESIGN.body);
+  const spacing = state.inTable ? '\\sa60\\sl300\\slmult1' : `\\sa${small ? 100 : 160}\\sl372\\slmult1`;
+  const indent = (state.listDepth || 0) * 300 + (state.quote ? 240 : 0);
+  const rule = role === 'section' ? '\\brdrt\\brdrs\\brdrw5\\brdrcf3\\brsp120' : state.quote ? '\\brdrl\\brdrs\\brdrw10\\brdrcf3\\brsp80\\cbpat4' : '';
+  const badge = role === 'badge' ? '\\cbpat4' : '';
+  const before = role === 'section' ? '\\sb400' : role.startsWith('heading') ? '\\sb220' : role === 'title' ? '\\sb120' : '';
+  return `\\pard\\plain${state.inTable ? '\\intbl' : ''}${state.pageBreakBefore ? '\\pagebb' : ''}\\f${role === 'code' ? 1 : 0}\\fs${Math.round(size*2)}\\cf${small ? 2 : 1}${spacing}${before}\\li${indent}${state.prefix ? '\\fi-220' : ''}${heading ? '\\keepn\\b' : ''}${state.keepNext ? '\\keepn' : ''}${rule}${badge}${state.align || '\\ql'} ${state.prefix || ''}${content}\\par\n`;
+}
+
 function renderRtfBlocks(node, state = {}) {
   if (!node) return '';
   const children = nodeChildren(node);
-  if (node.type === 'doc') return children.map(child => renderRtfBlocks(child, state)).join('');
-  if (node.type === 'paragraph' || node.type === 'heading' || node.type === 'blockquote' || node.type === 'unsupported') return `${rtfAlignment(node)}${renderRtfInline(node, state)}\\par\n`;
-  if (node.type === 'code_block') return `{\\f1 ${rtfEscape(inlineText(node))}}\\par\n`;
-  if (node.type === 'horizontal_rule') return `\\pard\\brdrb\\brdrs\\brdrw10\\brsp20 \\par\n`;
+  if (node.type === 'doc') {
+    const card = node.presentation === 'yield-summary';
+    const keepCard = card && inlineText(node).length < 900;
+    return children.map((child,index) => renderRtfBlocks(child, {...state, quote:state.quote || card, keepNext:keepCard && index < children.length - 1})).join('');
+  }
+  if (node.type === 'blockquote') return children.map(child => renderRtfBlocks(child, {...state,quote:true})).join('');
+  if (['paragraph','heading','unsupported'].includes(node.type)) return rtfParagraph(renderRtfInline(node,state), node.type === 'heading' ? `heading${node.attrs?.level || 2}` : state.inTable ? 'table' : 'body', {...state,align:rtfAlignment(node)});
+  if (node.type === 'code_block') return rtfParagraph(rtfEscape(inlineText(node)).replace(/\n/g,'\\line '),'code',state);
+  if (node.type === 'horizontal_rule') return '\\pard\\brdrb\\brdrs\\brdrw5\\brdrcf3\\sa160 \\par\n';
   if (node.type === 'bullet_list' || node.type === 'ordered_list') {
-    return children.filter(item => item.type === 'list_item').map((item, index) => {
-      const text = nodeChildren(item).map(child => renderRtfBlocks(child, state)).join('').replace(/\\par\n$/, '');
-      return `${node.type === 'ordered_list' ? `${index + 1}.` : '\\bullet'} ${text}\\par\n`;
-    }).join('');
+    return children.filter(item => item.type === 'list_item').map((item,index) => nodeChildren(item).map((child,childIndex) => renderRtfBlocks(child,{...state,listDepth:(state.listDepth || 0)+1,prefix:childIndex === 0 ? `${node.type === 'ordered_list' ? `${index+(node.attrs?.order || 1)}.` : '\\bullet'}\\tab ` : ''})).join('')).join('');
   }
-  if (node.type === 'list_item') return children.map(child => renderRtfBlocks(child, state)).join('');
+  if (node.type === 'list_item') return children.map(child=>renderRtfBlocks(child,state)).join('');
   if (node.type === 'table') {
-    const { grid, width, columnWidths } = tableLayout(node);
-    return grid.map((row, rowIndex) => {
-      let boundary = 0;
-      const properties = Array.from({ length: width }, (_, column) => {
-        const slot = row[column];
-        boundary += Math.round((columnWidths[column] || 120) * 15);
-        const horizontal = slot?.colspan > 1 ? (slot.column === column ? '\\clmgf' : '\\clmrg') : '';
-        const vertical = slot?.rowspan > 1 ? (slot.row === rowIndex ? '\\clvmgf' : '\\clvmrg') : '';
-        return `${horizontal}${vertical}\\cellx${boundary}`;
+    const { grid, width, columnWidths, fallback } = styledTable(node,state.model);
+    if (fallback) return renderRtfBlocks(fallback,state);
+    let leadingHeaders = true;
+    return grid.map((row,rowIndex) => {
+      let boundary=0;
+      const headerRow = row.length > 0 && row.every(slot=>slot?.cell.type==='table_header');
+      const repeat = leadingHeaders && headerRow;
+      leadingHeaders = repeat;
+      const properties = Array.from({length:width},(_,column)=>{
+        const slot=row[column];boundary+=Math.round(columnWidths[column]*15);
+        const horizontal=slot?.colspan>1?(slot.column===column?'\\clmgf':'\\clmrg'):'';
+        const vertical=slot?.rowspan>1?(slot.row===rowIndex?'\\clvmgf':'\\clvmrg'):'';
+        return `${horizontal}${vertical}${['t','b','l','r'].map(side=>`\\clbrdr${side}\\brdrs\\brdrw5\\brdrcf3`).join('')}${slot?.cell.type==='table_header'?'\\clcbpat4':''}\\cellx${boundary}`;
       }).join('');
-      const content = Array.from({ length: width }, (_, column) => {
-        const slot = row[column];
-        let text = '';
-        if (slot && slot.row === rowIndex && slot.column === column) {
-          text = nodeChildren(slot.cell).map(child => ['text', 'hard_break'].includes(child.type) ? renderRtfInline(child, state) : renderRtfBlocks(child, state)).join('').replace(/\\par\n$/, '');
-          if (slot.cell.type === 'table_header') text = `{\\b ${text}}`;
+      const content=Array.from({length:width},(_,column)=>{
+        const slot=row[column];let value='';
+        if(slot && slot.row===rowIndex && slot.column===column) {
+          const cellState={...state,inTable:true,listDepth:0,prefix:''};
+          value=nodeChildren(slot.cell).map(child=>['text','hard_break'].includes(child.type)?rtfParagraph(renderRtfInline(child,state),'table',cellState):renderRtfBlocks(child,cellState)).join('').replace(/\\par\n$/,'');
+          if(slot.cell.type==='table_header') value=value.replace(/(\\ql |\\qc |\\qr )/g,'$1\\b ');
         }
-        return `\\pard\\intbl ${text}\\cell `;
+        return `\\pard\\intbl\\f0\\fs20 ${value}\\cell `;
       }).join('');
-      const header = row.every(slot => slot?.cell.type === 'table_header') ? '\\trhdr ' : '';
-      return `{\\trowd ${header}${properties}${content}\\row}\n`;
-    }).join('');
+      const keepRow = row.every(slot => !slot || inlineText(slot.cell).length < 600);
+      return `{\\trowd\\trgaph100\\trleft0${keepRow?'\\trkeep':''}${repeat?'\\trhdr':''}${properties}${content}\\row}\n`;
+    }).join('')+'\\pard\\plain\\intbl0\\f0\\fs22\\sa0\\sb0\n';
   }
-  return children.map(child => renderRtfBlocks(child, state)).join('');
+  return children.map(child=>renderRtfBlocks(child,state)).join('');
 }
 
-function rtfImage(attachment) {
-  const preview = attachment.preview;
-  const mime = imageMime(preview, attachment);
-  if (!preview?.bytes || !mime) return '';
-  const control = mime === 'image/jpeg' || mime === 'image/jpg' ? 'jpegblip' : 'pngblip';
-  const hex = Buffer.from(preview.bytes).toString('hex').replace(/(.{128})/g, '$1\n');
-  return `{\\pict\\${control}\\picwgoal5760\\pichgoal4320\n${hex}}\\par\n`;
+function rtfImage(attachment, state) {
+  const preview=attachment.preview;
+  const mime=imageMime(preview,attachment);
+  if (!preview?.bytes) return '';
+  const size=fitImage(preview.bytes);
+  if (!['image/png','image/jpeg','image/jpg'].includes(mime) || !size) {
+    makeWarning(`Attachment “${attachment.name}” could not be sized or embedded safely in RTF; its filename and caption were retained.`,state.model.warnings);
+    return '';
+  }
+  const control=mime==='image/png'?'pngblip':'jpegblip';
+  const hex=Buffer.from(preview.bytes).toString('hex').replace(/(.{128})/g,'$1\n');
+  return rtfParagraph(`{\\pict\\${control}\\picwgoal${Math.round(size.width*15)}\\pichgoal${Math.round(size.height*15)}\n${hex}}`,'body',{keepNext:true});
 }
 
-function renderRtfAttachments(entry) {
+function renderRtfAttachments(entry,state) {
   if (!entry.attachments.length) return '';
-  let output = '{\\b Attachments}\\par\n';
+  let output=rtfParagraph('Attachments','heading3');
   for (const attachment of entry.attachments) {
-    const preview = attachment.preview;
-    const mime = imageMime(preview, attachment);
-    if (preview?.kind === 'image' && preview.bytes && mime) output += rtfImage(attachment);
-    if (preview?.kind === 'spreadsheet' && preview.sheets?.length) {
-      output += `{\\b ${rtfEscape(attachment.name)}}\\par\n`;
-      for (const sheet of preview.sheets) {
-        output += `{\\i ${rtfEscape(sheet.name)}}\\par\n`;
-        const rows = sheet.rows || [];
-        const width = Math.max(...rows.map(row => row.length), 1);
-        output += rows.map((row, rowIndex) => `{\\trowd ${Array.from({ length: width }, (_, index) => `\\cellx${Math.round((index + 1) * (9000 / width))}`).join(' ')}${Array.from({ length: width }, (_, index) => `${row[index] ? (rowIndex === 0 ? `{\\b ${rtfEscape(row[index])}}` : rtfEscape(row[index])) : ''}\\cell`).join('')}\\row}\n`).join('');
-      }
-    } else {
-      output += `${rtfEscape(attachment.name)}${attachment.caption ? ` — ${rtfEscape(attachment.caption)}` : ''}\\par\n`;
-    }
+    const preview=attachment.preview;
+    if (preview?.kind==='image') output+=rtfImage(attachment,state);
+    if (preview?.kind==='spreadsheet' && preview.sheets?.length) {
+      output+=rtfParagraph(rtfEscape(attachment.name),'heading3');
+      for (const sheet of preview.sheets) output+=rtfParagraph(rtfEscape(sheet.name),'small',{keepNext:true})+renderRtfBlocks(sheetTable(sheet),state);
+      if (attachment.caption) output+=rtfParagraph(rtfEscape(attachment.caption),'caption');
+    } else output+=rtfParagraph(rtfEscape(`${attachment.name}${attachment.caption?` — ${attachment.caption}`:''}`),'caption');
   }
   return output;
 }
 
 function renderRtf(model) {
-  const colors = collectRtfHighlightColors(model);
-  const colorIndexes = new Map(colors.map((color, index) => [color, index + 1]));
-  const colorTable = colors.length ? `{\\colortbl ;${colors.map(color => { const [red, green, blue] = rtfColorValue(color); return `\\red${red}\\green${green}\\blue${blue};`; }).join('')}}` : '';
-  const state = { colors, colorIndexes };
-  let output = `{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Helvetica;}{\\f1 Menlo;}}${colorTable}\\viewkind4\n`;
-  output += `{\\b ${rtfEscape(model.notebook.name)}}\\par\n${rtfEscape(model.notebook.discipline)}\\par\\par\n`;
-  model.entries.forEach((entry, index) => {
-    output += `{\\b ${rtfEscape(entry.code)} — ${rtfEscape(entry.title)}}\\par\n`;
-    output += `Date: ${rtfEscape(entry.date)}\\par\nAuthor: ${rtfEscape(entry.author)}\\par\nExperiment: ${rtfEscape(entry.experiment.label)}\\par\\par\n`;
-    for (const section of entry.sections) {
-      output += `{\\b ${rtfEscape(section.title)}}\\par\n${renderRtfBlocks(section.document, state)}`;
-      if (section.id === 'data') output += renderRtfAttachments(entry);
-      output += '\\par\n';
-    }
-    if (index !== model.entries.length - 1) output += '\\page\n';
+  const colors=[`#${DESIGN.ink}`,`#${DESIGN.secondary}`,`#${DESIGN.line}`,`#${DESIGN.soft}`,...collectRtfHighlightColors(model)];
+  const colorIndexes=new Map(colors.map((color,index)=>[color,index+1]));
+  const colorTable=`{\\colortbl ;${colors.map(color=>{const [r,g,b]=rtfColorValue(color);return `\\red${r}\\green${g}\\blue${b};`;}).join('')}}`;
+  const state={colors,colorIndexes,model};
+  let output=`{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0\\fswiss ${DESIGN.font};}{\\f1\\fmodern ${DESIGN.mono};}}${colorTable}\\viewkind4\\uc1\\paperw${twips(DESIGN.pageWidth)}\\paperh${twips(DESIGN.pageHeight)}\\margl${twips(DESIGN.margin)}\\margr${twips(DESIGN.margin)}\\margt${twips(DESIGN.margin)}\\margb${twips(DESIGN.margin)}\\widowctrl\\deftab360\n`;
+  if(model.entries.length>1) output+=`{\\header ${rtfParagraph(rtfEscape(model.notebook.name),'small')}}{\\footer\\pard\\plain\\f0\\fs18\\cf2\\qr {\\field{\\*\\fldinst PAGE}{\\fldrslt 1}}\\par}\n`;
+  output+=rtfParagraph(model.scope==='entry'?`{\\b LabMate}   ${rtfEscape(model.notebook.name)}`:'{\\b LabMate}','small',{keepNext:true});
+  if(model.scope!=='entry') output+=rtfParagraph(rtfEscape(model.notebook.name),'notebook');
+  if(notebookContext(model)) output+=rtfParagraph(rtfEscape(notebookContext(model)),'small',{keepNext:true});
+  model.entries.forEach((entry,index)=>{
+    output+=rtfParagraph(`{\\highlight4 ${rtfEscape(entry.code)}}`,'small',{keepNext:true,pageBreakBefore:index>0});
+    output+=rtfParagraph(rtfEscape(entry.title),'title');
+    output+=rtfParagraph(metadata(entry).map(([label,value])=>`${label}: ${rtfEscape(value)}`).join('    '),'small');
+    entry.sections.forEach((section,sectionIndex)=>{
+      output+=rtfParagraph(rtfEscape(sectionLabel(section,sectionIndex)),'section')+renderRtfBlocks(section.document,state);
+      if(section.id==='data') output+=renderRtfAttachments(entry,state);
+    });
   });
-  output += '}';
-  return Buffer.from(output, 'utf8');
+  return Buffer.from(output+'}','utf8');
 }
 
 function docxMarkOptions(marks) {
@@ -1145,7 +1204,7 @@ function docxMarkOptions(marks) {
     else if (mark.type === 'italic') options.italics = true;
     else if (mark.type === 'underline') options.underline = { type: docx.UnderlineType?.SINGLE || 'single' };
     else if (mark.type === 'strike') options.strike = true;
-    else if (mark.type === 'code') options.font = 'Menlo';
+    else if (mark.type === 'code') options.font = DESIGN.mono;
     else if (mark.type === 'superscript') options.superScript = true;
     else if (mark.type === 'subscript') options.subScript = true;
     else if (mark.type === 'highlight') {
@@ -1184,125 +1243,151 @@ function docxAlignment(node) {
 }
 
 function docxTableNode(node, model) {
-  const { placements, columnWidths } = tableLayout(node);
+  const { placements, columnWidths, fallback } = styledTable(node,model);
+  if (fallback) return docxBlockNodes(fallback,model);
   if (!placements.length) return null;
-  const widths = columnWidths.map(width => Math.round((width || 120) * 15));
-  const headerMarks = node => ({ ...node, ...(node.type === 'text' ? { marks: [...(node.marks || []), { type: 'bold' }] } : {}), ...(node.content ? { content: node.content.map(headerMarks) } : {}) });
+  const widths=columnWidths.map(width=>Math.round(width*15));
+  const headerMarks=node=>({...node,...(node.type==='text'?{marks:[...(node.marks||[]),{type:'bold'}]}:{}),...(node.content?{content:node.content.map(headerMarks)}:{})});
+  const border={style:docx.BorderStyle.SINGLE,size:4,color:DESIGN.line};
+  let leadingHeaders=true;
   return new docx.Table({
-    rows: placements.map(row => new docx.TableRow({
-      tableHeader: row.length > 0 && row.every(({ cell }) => cell.type === 'table_header'),
-      children: row.map(({ cell, column, colspan, rowspan }) => {
-        const content = cell.type === 'table_header' ? headerMarks(cell) : cell;
-        const blocks = nodeChildren(content).flatMap(child => ['text', 'hard_break'].includes(child.type) ? [docxParagraphNode({ content: [child] }, model)] : docxBlockNodes(child, model));
-        return new docx.TableCell({
-          columnSpan: colspan,
-          rowSpan: rowspan,
-          width: { size: widths.slice(column, column + colspan).reduce((sum, value) => sum + value, 0), type: docx.WidthType.DXA },
-          children: blocks.length ? blocks : [new docx.Paragraph('')],
+    rows:placements.map(row=>{
+      const header=row.length>0 && row.every(({cell})=>cell.type==='table_header');
+      const repeat=leadingHeaders && header;leadingHeaders=repeat;
+      return new docx.TableRow({tableHeader:repeat,children:row.map(({cell,column,colspan,rowspan})=>{
+        const content=cell.type==='table_header'?headerMarks(cell):cell;
+        const blocks=nodeChildren(content).flatMap(child=>['text','hard_break'].includes(child.type)?[docxParagraphNode({content:[child]},model,{style:'LabMateTable'})]:docxBlockNodes(child,model,{style:'LabMateTable'}));
+        return new docx.TableCell({columnSpan:colspan,rowSpan:rowspan,
+          width:{size:widths.slice(column,column+colspan).reduce((a,b)=>a+b,0),type:docx.WidthType.DXA},
+          margins:{top:100,bottom:100,left:130,right:130},
+          ...(cell.type==='table_header'?{shading:{fill:DESIGN.soft}}:{}),
+          children:blocks.length?blocks:[new docx.Paragraph({text:'',style:'LabMateTable'})],
         });
-      }),
-    })),
-    columnWidths: widths,
-    layout: docx.TableLayoutType.FIXED,
-    width: { size: widths.reduce((sum, value) => sum + value, 0), type: docx.WidthType.DXA },
+      })});
+    }),
+    borders:{top:border,bottom:border,left:border,right:border,insideHorizontal:border,insideVertical:border},
+    columnWidths:widths,layout:docx.TableLayoutType.FIXED,
+    width:{size:widths.reduce((a,b)=>a+b,0),type:docx.WidthType.DXA},
   });
 }
 
-function docxBlockNodes(node, model, listReference = null) {
+function docxBlockNodes(node, model, state = {}) {
   if (!node) return [];
-  const children = nodeChildren(node);
-  if (node.type === 'doc') return children.flatMap(child => docxBlockNodes(child, model));
-  if (node.type === 'paragraph' || node.type === 'blockquote' || node.type === 'unsupported') {
-    return [docxParagraphNode(node, model, { ...(docxAlignment(node) ? { alignment: docxAlignment(node) } : {}) })];
+  const children=nodeChildren(node);
+  if(node.type==='doc') return children.flatMap((child,index)=>{
+    const blocks=docxBlockNodes(child,model,node.presentation==='yield-summary'?{...state,style:'LabMateYield',keepNext:inlineText(node).length<900 && index<children.length-1}:state);
+    return blocks;
+  });
+  if(node.type==='blockquote') return children.flatMap(child=>docxBlockNodes(child,model,{...state,style:'LabMateQuote'}));
+  if(node.type==='paragraph'||node.type==='unsupported') return [docxParagraphNode(node,model,{style:state.style||'Normal',keepNext:state.keepNext,...(docxAlignment(node)?{alignment:docxAlignment(node)}:{})})];
+  if(node.type==='heading') return [docxParagraphNode(node,model,{style:`LabMateBodyH${clampInteger(node.attrs?.level,1,6,2)}`,...(docxAlignment(node)?{alignment:docxAlignment(node)}:{})})];
+  if(node.type==='code_block') return [new docx.Paragraph({style:'LabMateCode',children:inlineText(node).split('\n').flatMap((line,index)=>[...(index?[new docx.TextRun({break:1})]:[]),new docx.TextRun({text:line,font:DESIGN.mono})])})];
+  if(node.type==='horizontal_rule') return [new docx.Paragraph({border:{bottom:{style:docx.BorderStyle.SINGLE,color:DESIGN.line,size:4}},spacing:{after:160}})];
+  if(node.type==='bullet_list'||node.type==='ordered_list') {
+    const depth=Math.min(state.depth||0,8);
+    const reference=`labmate-list-${model.numbering.length}`;
+    const numbered=node.type==='ordered_list';
+    model.numbering.push({reference,levels:Array.from({length:9},(_,level)=>({level,format:numbered?docx.LevelFormat.DECIMAL:docx.LevelFormat.BULLET,text:numbered?`%${level+1}.`:'•',start:node.attrs?.order||1,alignment:docx.AlignmentType.LEFT,style:{paragraph:{indent:{left:360*(level+1),hanging:240}},run:{font:DESIGN.font,color:DESIGN.ink,size:22}}}))});
+    return children.filter(child=>child.type==='list_item').flatMap(item=>{
+      const output=[];let first=true;
+      for(const child of nodeChildren(item)) {
+        if(['bullet_list','ordered_list'].includes(child.type)) output.push(...docxBlockNodes(child,model,{...state,depth:depth+1}));
+        else if(first && ['paragraph','heading'].includes(child.type)) {output.push(docxParagraphNode(child,model,{style:state.style||'Normal',numbering:{reference,level:depth}}));first=false;}
+        else output.push(...docxBlockNodes(child,model,state));
+      }
+      return output;
+    });
   }
-  if (node.type === 'heading') {
-    const level = clampInteger(node.attrs?.level, 1, 6, 2);
-    const heading = docx.HeadingLevel?.[`HEADING_${level}`] || `Heading${level}`;
-    return [docxParagraphNode(node, model, { heading, ...(docxAlignment(node) ? { alignment: docxAlignment(node) } : {}) })];
+  if(node.type==='table') {
+    const table=docxTableNode(node,model);
+    return table?(Array.isArray(table)?table:[table]):[];
   }
-  if (node.type === 'code_block') return [new docx.Paragraph({ children: [new docx.TextRun({ text: inlineText(node), font: 'Menlo' })] })];
-  if (node.type === 'horizontal_rule') return [new docx.Paragraph({ thematicBreak: true })];
-  if (node.type === 'bullet_list' || node.type === 'ordered_list') {
-    const reference = node.type === 'bullet_list' ? 'labmate-bullets' : 'labmate-numbered';
-    return children.filter(item => item.type === 'list_item').flatMap(item => docxBlockNodes(item, model, reference));
-  }
-  if (node.type === 'list_item') {
-    const blocks = children.filter(child => !['bullet_list', 'ordered_list'].includes(child.type));
-    const nested = children.filter(child => ['bullet_list', 'ordered_list'].includes(child.type));
-    const first = blocks.shift();
-    const output = first
-      ? [docxParagraphNode(first, model, { numbering: { reference: listReference || 'labmate-bullets', level: 0 } })]
-      : [new docx.Paragraph({ text: '', numbering: { reference: listReference || 'labmate-bullets', level: 0 } })];
-    return output.concat(blocks.flatMap(block => docxBlockNodes(block, model)), nested.flatMap(child => docxBlockNodes(child, model)));
-  }
-  if (node.type === 'table') {
-    const table = docxTableNode(node, model);
-    return table ? [table] : [];
-  }
-  return children.flatMap(child => docxBlockNodes(child, model, listReference));
+  return children.flatMap(child=>docxBlockNodes(child,model,state));
 }
 
 function docxImageNode(attachment, model) {
-  const preview = attachment.preview;
-  const mime = imageMime(preview, attachment);
-  const typeMap = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/gif': 'gif', 'image/bmp': 'bmp' };
-  const type = typeMap[mime];
-  if (!preview?.bytes || !type) {
-    if (preview?.bytes && mime) makeWarning(`Attachment “${attachment.name}” uses an image format DOCX cannot embed; its filename and caption were retained.`, model.warnings);
+  const preview=attachment.preview;
+  const mime=imageMime(preview,attachment);
+  const type=({'image/png':'png','image/jpeg':'jpg','image/jpg':'jpg','image/gif':'gif','image/bmp':'bmp'})[mime];
+  const size=fitImage(preview?.bytes);
+  if(!preview?.bytes||!type||!size) {
+    if(preview?.bytes) makeWarning(`Attachment “${attachment.name}” could not be sized or embedded safely in DOCX; its filename and caption were retained.`,model.warnings);
     return null;
   }
-  return new docx.ImageRun({ type, data: Buffer.from(preview.bytes), transformation: { width: 520, height: 340 } });
+  return new docx.ImageRun({type,data:Buffer.from(preview.bytes),transformation:size,altText:{title:attachment.name,description:attachment.caption||attachment.name,name:attachment.name}});
 }
 
 function docxAttachmentNodes(entry, model) {
-  if (!entry.attachments.length) return [];
-  const output = [new docx.Paragraph({ children: [new docx.TextRun({ text: 'Attachments', bold: true })] })];
-  for (const attachment of entry.attachments) {
-    const image = attachment.preview?.kind === 'image' ? docxImageNode(attachment, model) : null;
-    if (image) output.push(new docx.Paragraph({ children: [image] }));
-    else if (attachment.preview?.kind === 'spreadsheet' && attachment.preview.sheets?.length) {
-      output.push(new docx.Paragraph({ children: [new docx.TextRun({ text: attachment.name, bold: true })] }));
-      for (const sheet of attachment.preview.sheets) {
-        output.push(new docx.Paragraph({ children: [new docx.TextRun({ text: sheet.name, italics: true })] }));
-        const rows = sheet.rows || [];
-        const width = Math.max(...rows.map(row => row.length), 1);
-        if (rows.length) output.push(new docx.Table({ rows: rows.map((row, rowIndex) => new docx.TableRow({ children: Array.from({ length: width }, (_, index) => new docx.TableCell({ children: [new docx.Paragraph({ children: [new docx.TextRun({ text: row[index] || '', bold: rowIndex === 0 })] })] })) })) }));
+  if(!entry.attachments.length) return [];
+  const output=[new docx.Paragraph({text:'Attachments',style:'LabMateBodyH3'})];
+  for(const attachment of entry.attachments) {
+    const image=attachment.preview?.kind==='image'?docxImageNode(attachment,model):null;
+    if(image) output.push(new docx.Paragraph({children:[image],keepNext:true,spacing:{before:160,after:100}}));
+    else if(attachment.preview?.kind==='spreadsheet'&&attachment.preview.sheets?.length) {
+      output.push(new docx.Paragraph({text:attachment.name,style:'LabMateBodyH3'}));
+      for(const sheet of attachment.preview.sheets) {
+        output.push(new docx.Paragraph({text:sheet.name,style:'LabMateCaption',keepNext:true}));
+        output.push(...docxBlockNodes(sheetTable(sheet),model));
       }
-    } else {
-      output.push(new docx.Paragraph({ children: [new docx.TextRun({ text: attachment.name, bold: true }), ...(attachment.caption ? [new docx.TextRun(` — ${attachment.caption}`)] : [])] }));
+      if(attachment.caption) output.push(new docx.Paragraph({text:attachment.caption,style:'LabMateCaption'}));
+      continue;
     }
-    if (image && attachment.caption) output.push(new docx.Paragraph({ children: [new docx.TextRun({ text: attachment.caption, italics: true })] }));
+    output.push(new docx.Paragraph({text:`${attachment.name}${attachment.caption?` — ${attachment.caption}`:''}`,style:'LabMateCaption'}));
   }
   return output;
 }
 
+function docxStyles(single) {
+  const run={font:DESIGN.font,size:DESIGN.body*2,color:DESIGN.ink};
+  const paragraph={spacing:{after:160,line:372},widowControl:true};
+  const style=(id,name,size,extraRun={},extraParagraph={})=>({id,name,basedOn:'Normal',next:'Normal',quickFormat:true,run:{...run,size:size*2,...extraRun},paragraph:{...paragraph,...extraParagraph}});
+  const rule={style:docx.BorderStyle.SINGLE,color:DESIGN.line,size:4,space:12};
+  const inset={indent:{left:240,right:160},border:{left:{...rule,size:8}},shading:{fill:DESIGN.soft},spacing:{before:100,after:100,line:350}};
+  return {
+    default:{document:{run,paragraph},title:{run,paragraph},heading1:{run,paragraph},heading2:{run,paragraph},heading3:{run,paragraph},heading4:{run,paragraph},heading5:{run,paragraph},heading6:{run,paragraph},hyperlink:{run:{color:DESIGN.ink,underline:{type:docx.UnderlineType.SINGLE}}}},
+    paragraphStyles:[
+      style('LabMateNotebook','LabMate Notebook',DESIGN.notebook,{bold:true},{keepNext:true,outlineLevel:0,spacing:{before:100,after:120}}),
+      style('LabMateEntry','LabMate Experiment',DESIGN.title,{bold:true},{keepNext:true,outlineLevel:single?0:1,spacing:{before:140,after:160,line:300}}),
+      style('LabMateSection','LabMate Section',DESIGN.section,{bold:true},{keepNext:true,outlineLevel:single?1:2,spacing:{before:400,after:240},border:{top:rule}}),
+      style('LabMateMetadata','LabMate Metadata',DESIGN.small,{color:DESIGN.secondary},{spacing:{after:100,line:300}}),
+      style('LabMateCaption','LabMate Caption',DESIGN.small,{color:DESIGN.secondary},{spacing:{before:100,after:160,line:300}}),
+      style('LabMateTable','LabMate Table',DESIGN.table,{}, {spacing:{after:60,line:300}}),
+      style('LabMateCode','LabMate Code',10,{font:DESIGN.mono},{...inset}),
+      style('LabMateQuote','LabMate Quote',DESIGN.body,{},inset),
+      style('LabMateYield','LabMate Yield',DESIGN.body,{},inset),
+      ...[15,13.5,12,11,11,11].map((size,index)=>style(`LabMateBodyH${index+1}`,`LabMate Content Heading ${index+1}`,size,{bold:true},{keepNext:true,outlineLevel:Math.min(8,index+(single?2:3)),spacing:{before:240,after:120,line:300}})),
+    ],
+    characterStyles:[{id:'LabMateBadge',name:'LabMate Entry Code',run:{...run,size:18,color:DESIGN.secondary,shading:{fill:DESIGN.soft},border:{style:docx.BorderStyle.SINGLE,color:DESIGN.line,size:4,space:3}}}],
+  };
+}
+
 async function renderDocx(model) {
-  if (!docx) throw new ExportError('UNAVAILABLE', 'The DOCX writer dependency is unavailable');
-  const children = [
-    new docx.Paragraph({ heading: docx.HeadingLevel?.TITLE || 'Title', children: [new docx.TextRun({ text: model.notebook.name, bold: true })] }),
-    new docx.Paragraph({ children: [new docx.TextRun(model.notebook.discipline)] }),
-  ];
-  for (const entry of model.entries) {
-    children.push(new docx.Paragraph({ heading: docx.HeadingLevel?.HEADING_1 || 'Heading1', children: [new docx.TextRun({ text: `${entry.code} — ${entry.title}`, bold: true })] }));
-    children.push(new docx.Paragraph({ children: [new docx.TextRun(`Date: ${entry.date}    Author: ${entry.author}    Experiment: ${entry.experiment.label}`)] }));
-    for (const section of entry.sections) {
-      children.push(new docx.Paragraph({ heading: docx.HeadingLevel?.HEADING_2 || 'Heading2', children: [new docx.TextRun({ text: section.title, bold: true })] }));
-      children.push(...docxBlockNodes(section.document, model));
-      if (section.id === 'data') children.push(...docxAttachmentNodes(entry, model));
-    }
-  }
-  const document = new docx.Document({
-    creator: 'LabMate',
-    title: model.notebook.name,
-    numbering: {
-      config: [
-        { reference: 'labmate-bullets', levels: [{ level: 0, format: docx.LevelFormat?.BULLET || 'bullet', text: '•', alignment: 'left' }] },
-        { reference: 'labmate-numbered', levels: [{ level: 0, format: docx.LevelFormat?.DECIMAL || 'decimal', text: '%1.', alignment: 'left' }] },
-      ],
-    },
-    sections: [{ children }],
+  if(!docx) throw new ExportError('UNAVAILABLE','The DOCX writer dependency is unavailable');
+  // Writer-local numbering state is never attached to the shared resolved model.
+  const context={...model,numbering:[]};
+  const single=model.scope==='entry';
+  const children=[new docx.Paragraph({style:'LabMateMetadata',keepNext:true,children:[new docx.TextRun({text:'LabMate',bold:true}),...(single?[new docx.TextRun(`   ${model.notebook.name}`)]:[])]})];
+  if(!single) children.push(new docx.Paragraph({text:model.notebook.name,style:'LabMateNotebook'}));
+  if(notebookContext(model)) children.push(new docx.Paragraph({text:notebookContext(model),style:'LabMateMetadata',keepNext:true}));
+  model.entries.forEach((entry,index)=>{
+    children.push(new docx.Paragraph({style:'LabMateMetadata',keepNext:true,pageBreakBefore:index>0,children:[new docx.TextRun({text:entry.code,style:'LabMateBadge'})]}));
+    children.push(new docx.Paragraph({text:entry.title,style:'LabMateEntry'}));
+    children.push(new docx.Paragraph({text:metadata(entry).map(([label,value])=>`${label}: ${value}`).join('    '),style:'LabMateMetadata'}));
+    entry.sections.forEach((section,sectionIndex)=>{
+      children.push(new docx.Paragraph({text:sectionLabel(section,sectionIndex),style:'LabMateSection'}));
+      children.push(...docxBlockNodes(section.document,context));
+      if(section.id==='data') children.push(...docxAttachmentNodes(entry,context));
+    });
   });
-  return { bytes: await docx.Packer.toBuffer(document), assets: [], assetsDirectory: null };
+  const multiple=model.entries.length>1;
+  const document=new docx.Document({creator:'LabMate',title:model.notebook.name,background:{color:'FFFFFF'},styles:docxStyles(single),numbering:{config:context.numbering},sections:[{
+    properties:{page:{size:{width:twips(DESIGN.pageWidth),height:twips(DESIGN.pageHeight)},margin:{top:twips(DESIGN.margin),bottom:twips(DESIGN.margin),left:twips(DESIGN.margin),right:twips(DESIGN.margin),header:540,footer:540}}},
+    ...(multiple?{headers:{default:new docx.Header({children:[new docx.Paragraph({text:model.notebook.name,style:'LabMateMetadata'})]})},footers:{default:new docx.Footer({children:[new docx.Paragraph({style:'LabMateMetadata',alignment:docx.AlignmentType.RIGHT,children:[new docx.TextRun({children:[docx.PageNumber.CURRENT]})]})]})}}:{}),children,
+  }]});
+  // Explicit family and alternate names keep readers without these faces
+  // in the sans-serif/monospace families. No font files are embedded.
+  const fonts = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:font w:name="Arial"><w:altName w:val="Liberation Sans"/><w:family w:val="swiss"/><w:pitch w:val="variable"/></w:font><w:font w:name="Courier New"><w:altName w:val="Liberation Mono"/><w:family w:val="modern"/><w:pitch w:val="fixed"/></w:font></w:fonts>`;
+  return {bytes:await docx.Packer.toBuffer(document, false, [{path:'word/fontTable.xml',data:fonts}]),assets:[],assetsDirectory:null};
 }
 
 async function renderExportDocument(model) {

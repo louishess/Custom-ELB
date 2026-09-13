@@ -61,7 +61,9 @@ const run = (id: string, notebookId: string, experimentId: string, label: string
  * real library snapshot.
  */
 export const demoSnapshot: LibrarySnapshot = {
-  schemaVersion: 2,
+  schemaVersion: 4,
+  libraryGeneration: '00000000-0000-4000-8000-000000000000',
+  citations: [], legacyCitationCount: 0,
   notebooks: [
     { id: 'demo-catalysis', name: 'Catalysis & synthesis', description: 'Reaction development, catalyst screening, and repeat experiments.', discipline: 'Organic chemistry', color: 'sage', revision: 1, createdAt: times[6], updatedAt: times[0], trashedAt: null },
     { id: 'demo-materials', name: 'Functional materials', description: 'Thin films, surface treatments, and material characterization.', discipline: 'Materials science', color: 'blue', revision: 1, createdAt: times[6], updatedAt: times[1], trashedAt: null },

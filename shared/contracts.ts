@@ -10,7 +10,17 @@ export interface AttachmentRecord { id: string; runId: string; name: string; mim
 export interface SchemeRecord { id: string; notebookId: string; name: string; description: string; runIds: string[]; revision: number }
 export type PaletteId = 'sage' | 'ocean' | 'lavender' | 'terracotta' | 'rose' | 'graphite' | 'midnight';
 export interface Preferences { appearance: number; palette: PaletteId; layout: 'continuous' | 'tabs'; directoryView: 'grid' | 'list'; sort: string }
-export interface LibrarySnapshot { schemaVersion: number; notebooks: NotebookRecord[]; experiments: ExperimentRecord[]; runs: RunRecord[]; attachments: AttachmentRecord[]; schemes: SchemeRecord[]; preferences: Preferences }
+export interface CitationIdentity { sourceInstance: string; libraryType: 'user'|'group'; libraryId: string; itemKey: string }
+export interface CitationBibliography { version: 1; itemType: string; title: string; creators: {name: string; role: string}[]; date: string; publication: string; volume: string; issue: string; pages: string; doi: string; url: string; libraryLabel: string; fetchedAt: string; sourceVersion: number|null }
+export interface ZoteroItem extends CitationIdentity { snapshot: CitationBibliography }
+export interface CitationRecord extends ZoteroItem { id: string; experimentId: string; createdAt: string; updatedAt: string }
+export interface ZoteroStatus { state: 'disconnected'|'connected'|'unavailable'|'disabled'|'unsupported'|'source-changed'|'failed'; enabled: boolean; generation: string; sourceInstance?: string; clientVersion?: string; message: string }
+export interface ZoteroLibrary { libraryType: 'user'|'group'; libraryId: string; name: string }
+export interface ZoteroCollection { key: string; name: string; parentKey: string|null }
+export interface ZoteroPage<T> { items: T[]; nextStart: number|null; total: number|null }
+export interface CitationTarget { experimentId: string; expectedRevision: number; libraryGeneration: string }
+export interface ZoteroQuery { generation: string; libraryType: 'user'|'group'; libraryId: string; start: number }
+export interface LibrarySnapshot { schemaVersion: number; libraryGeneration: string; citations: CitationRecord[]; legacyCitationCount: number; notebooks: NotebookRecord[]; experiments: ExperimentRecord[]; runs: RunRecord[]; attachments: AttachmentRecord[]; schemes: SchemeRecord[]; preferences: Preferences }
 export interface BackupStatus { configured: boolean; destinationLabel?: string; destinationAvailable?: boolean; lastBackupAt?: string; lastAttemptAt?: string; lastFailure?: {at: string; message: string}; progress?: JobEvent; message?: string; running?: boolean }
 export interface DictationCapabilities { available: boolean; reason?: string; locales: {id: string; name: string; installed: boolean}[] }
 export interface DictationEvent { sessionId: string; state: 'preparing' | 'ready' | 'recording' | 'stopped' | 'cancelled' | 'error'; transcript?: string; final?: boolean; message?: string }
@@ -19,6 +29,18 @@ export interface Preview { kind: 'image' | 'pdf' | 'spreadsheet' | 'unsupported'
 export interface ExportRequest { scope: 'entry' | 'selected' | 'notebook'; notebookId: string; runIds: string[]; format: 'txt' | 'md' | 'html' | 'rtf' | 'docx'; order: string; schemeId?: string; sections: SectionId[]; data: 'none' | 'captions' | 'previews'; jobId: string }
 type Op<I, O = LibrarySnapshot> = { input: I; output: O };
 export interface Operations {
+ 'zotero.status': Op<undefined, ZoteroStatus>;
+ 'zotero.connect': Op<undefined, ZoteroStatus>;
+ 'zotero.disconnect': Op<undefined, ZoteroStatus>;
+ 'zotero.cancel': Op<{sessionId: string}, {cancelled: boolean}>;
+ 'zotero.libraries': Op<{generation: string; start: number}, ZoteroPage<ZoteroLibrary>>;
+ 'zotero.collections': Op<ZoteroQuery, ZoteroPage<ZoteroCollection>>;
+ 'zotero.search': Op<ZoteroQuery & {query: string; collectionKey?: string}, ZoteroPage<ZoteroItem>>;
+ 'zotero.item': Op<{generation: string; identity: CitationIdentity}, ZoteroItem>;
+ 'citations.add': Op<CitationTarget & {generation: string; sessionId: string; items: CitationIdentity[]}>;
+ 'citations.remove': Op<CitationTarget & {id: string}>;
+ 'citations.previewRefresh': Op<CitationTarget & {id: string; generation: string; sessionId: string}, {token: string; item: ZoteroItem}>;
+ 'citations.applyRefresh': Op<CitationTarget & {token: string; sessionId: string}>;
  'records.snapshot': Op<undefined>;
  'records.createNotebook': Op<{name: string; description: string; discipline: string; color: NotebookRecord['color']}>;
  'records.updateNotebook': Op<{id: string; expectedRevision: number; changes: Partial<Pick<NotebookRecord, 'name'|'description'|'discipline'|'color'>>}>;
@@ -59,7 +81,7 @@ type OperationFunction<K extends keyof Operations> = Operations[K]['input'] exte
  ? (input?: undefined) => Promise<Result<Operations[K]['output']>>
  : (input: Operations[K]['input']) => Promise<Result<Operations[K]['output']>>;
 type Namespace<N extends string> = { [K in keyof Operations as K extends `${N}.${infer M}` ? M : never]: OperationFunction<K> };
-export type LabmateAPI = { [N in 'records'|'documents'|'yield'|'schemes'|'preferences'|'trash'|'attachments'|'exports'|'backups'|'jobs'|'dictation']: Namespace<N> } & {
+export type LabmateAPI = { [N in 'records'|'documents'|'yield'|'schemes'|'preferences'|'trash'|'attachments'|'exports'|'backups'|'jobs'|'dictation'|'zotero'|'citations']: Namespace<N> } & {
  onDictation: (listener: (event: DictationEvent) => void) => () => void;
  onProgress: (listener: (event: JobEvent) => void) => () => void;
  onBeforeClose: (listener: () => Promise<boolean>) => () => void;

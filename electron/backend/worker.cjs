@@ -16,6 +16,7 @@ const path = require('node:path');
 // zod is a required runtime dependency.  Failing at startup when packaging
 // omits it is safer than silently weakening the worker trust boundary.
 const z = require('zod');
+const citationData = require('../../shared/citations.cjs');
 const { PALETTES } = require('./schema.cjs');
 
 const SECTION_IDS = Object.freeze(['information', 'method', 'notes', 'data']);
@@ -29,6 +30,7 @@ const ERROR_CODES = Object.freeze(new Set([
 ]));
 
 const WORKER_METHODS = Object.freeze(new Set([
+  'citations.add', 'citations.remove', 'citations.applyRefresh',
   'records.snapshot',
   'records.createNotebook',
   'records.updateNotebook',
@@ -58,6 +60,7 @@ const WORKER_METHODS = Object.freeze(new Set([
 ]));
 
 const JOB_METHODS = Object.freeze(new Set([
+  'citations.add', 'citations.applyRefresh',
   'attachments.import',
   'attachments.preview',
   'exports.write',
@@ -162,6 +165,10 @@ function isJobId(value) {
 
 function payloadShapeError(method, payload, internal = true) {
   const fail = message => message;
+  if (citationData.internalSchemas[method]) {
+    const schema = internal ? citationData.internalSchemas[method] : citationData.schemas[method];
+    return schema.safeParse(payload).success && (!internal || !JOB_METHODS.has(method) || isUUID(payload.jobId)) ? null : 'Invalid citation payload';
+  }
   switch (method) {
     case 'records.snapshot':
       return payload === undefined ? null : fail('records.snapshot takes no payload');
@@ -423,6 +430,7 @@ function loadServices(root, options = {}) {
 
 function serviceMethod(services, method, payload, context) {
   if (method === 'records.snapshot') return services.store.snapshot();
+  if (method.startsWith('citations.')) return services.store.dispatch(method, payload);
   if (method.startsWith('records.') || method === 'documents.save' || method.startsWith('schemes.')
     || method === 'preferences.update' || method.startsWith('trash.')) {
     return services.store.dispatch(method, payload);
