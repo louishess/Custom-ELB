@@ -508,6 +508,35 @@ mark { color: var(--ink-secondary); background: var(--surface-soft); padding: 2p
 .citation-unavailable { border: 0; padding: 20px 0 8px; }
 .citation-unavailable h3 { color: var(--ink); font-size: 16px; font-weight: 550; }
 .citation-unavailable p { max-width: 420px; }
+
+.zotero-connection { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px; margin-bottom: 18px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; }
+.zotero-connection > div:first-child { flex: 1; min-width: 230px; }
+.zotero-connection p { font-size: 12px; line-height: 1.65; margin: 6px 0; }
+.zotero-connection small, .citation-bibliography small { color: var(--ink-secondary); font-size: 11px; }
+.citation-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.citation-panel > .form-columns { margin: 18px 0 12px; }
+.citation-panel .search-field { margin: 12px 0; }
+.citation-results { max-height: 340px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; }
+.citation-results > p { padding: 16px; }
+.citation-result { display: flex; align-items: center; gap: 12px; padding: 12px; border-bottom: 1px solid var(--line); }
+.citation-result:last-child { border-bottom: 0; }
+.citation-result > button { flex: 1; min-width: 0; text-align: left; }
+.citation-result strong, .saved-citation span { display: block; font-size: 13px; overflow-wrap: anywhere; line-height: 1.6; }
+.citation-result small, .saved-citation small { display: block; font-size: 11px; line-height: 1.6; color: var(--ink-secondary); }
+.citation-result:hover, .saved-citation:hover { background: var(--surface-soft); }
+.experiment-references { margin: 16px 0 22px; }
+.experiment-references h3, .citation-detail-card h3 { font-size: 14px; line-height: 1.6; }
+.saved-citation { display: flex; align-items: flex-start; gap: 9px; text-align: left; padding: 9px 0; width: 100%; border-bottom: 1px solid var(--line); }
+.saved-citation > svg { flex-shrink: 0; margin-top: 4px; color: var(--accent); }
+.citation-detail-card { border: 1px solid var(--line); background: var(--surface-soft); padding: 18px; border-radius: 8px; margin: 16px 0; }
+.citation-bibliography { overflow-wrap: anywhere; }
+.citation-bibliography p { line-height: 1.6; font-size: 12px; margin: 8px 0; }
+.citation-bibliography dl { margin: 12px 0; font-size: 12px; line-height: 1.6; }
+.citation-bibliography dt { color: var(--ink-secondary); font-size: 11px; }
+.citation-bibliography dd { margin: 0 0 8px; }
+.citation-detail-card > .citation-actions { margin-top: 14px; }
+.citation-chips > button { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citation-chips .citation-plus { padding: 5px 8px; }
 .attachment-panel { display: flex; flex-direction: column; gap: 18px; }
 .attachment-panel .attachment-detail-heading { margin-bottom: 0; }
 .demo-attachment-placeholder { display: flex; flex-direction: column; align-items: center; gap: 10px; min-height: 210px; justify-content: center; color: var(--accent-ink); text-align: center; }

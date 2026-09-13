@@ -549,6 +549,21 @@ async function resolveExportDocument(store, fileService, input, context = {}) {
       title: SECTION_TITLES[id],
       document: normalizeDocument(run.documents?.[id], { losses, nodes: 0 }),
     }));
+    const references = (snapshot.citations || []).filter(citation => citation.experimentId === experiment.id);
+    if (references.length) {
+      const {referenceText, safeURL} = require('../../shared/citations.cjs');
+      const paragraphs = references.map(citation => {
+        const label = referenceText(citation.snapshot);
+        const url = safeURL(citation.snapshot.doi
+          ? `https://doi.org/${citation.snapshot.doi.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')}`
+          : citation.snapshot.url);
+        const content = url && label.endsWith(url)
+          ? [{type: 'text', text: label.slice(0, -url.length)}, {type: 'text', text: url, marks: [{type: 'link', attrs: {href: url}}]}]
+          : [{type: 'text', text: label}];
+        return {type: 'paragraph', content: content.filter(node => node.text)};
+      });
+      sections.push({id: 'references', title: 'References', document: normalizeDocument({type: 'doc', content: paragraphs}, {losses, nodes: 0})});
+    }
     const resolvedAttachments = request.sections.includes('data') && request.data !== 'none'
       ? (entryAttachments.get(run.id) || []).map(item => ({ ...item })) : [];
     if (request.data === 'previews' && request.sections.includes('data')) {

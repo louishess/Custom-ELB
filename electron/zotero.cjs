@@ -38,12 +38,20 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
   let enabled=false;
   try { enabled=JSON.parse(fs.readFileSync(configPath,'utf8')).enabled===true; } catch { /* first use */ }
   let generation=crypto.randomUUID();
+  let boundSource=null;
+  let activeRequests=0;
   let controller=new AbortController();
   let current={state:'disconnected', enabled, generation, message:enabled ? 'Check the Zotero connection.' : 'Connect Zotero to browse references.'};
   const libraries=new Map();
   const sessions=new Map();
   const cancelledSessions=new Map();
   const previews=new Map();
+
+  async function perform(route,options) {
+    if(activeRequests>=8) throw fault('UNAVAILABLE','Wait for the current Zotero requests to finish.');
+    activeRequests++;
+    try { return await request(route,options); } finally { activeRequests--; }
+  }
 
   function persist() {
     if (!configPath) return;
@@ -70,9 +78,9 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
     if (!enabled && !explicit) return {...current};
     if (explicit) { enabled=true; persist(); invalidate(); }
     const g=generation;
-    const previous=current.sourceInstance;
+    const previous=boundSource;
     try {
-      const response=await request('/api/',{signal:controller.signal,port});
+      const response=await perform('/api/',{signal:controller.signal,port});
       if (g!==generation) throw fault('CANCELLED','Connection check cancelled.');
       const clientVersion=typeof response.headers['x-zotero-version']==='string' ? response.headers['x-zotero-version'].slice(0,128) : undefined;
       if (response.status===403) return setState('disabled','In Zotero Settings → Advanced, enable “Allow other applications on this computer to communicate with Zotero”, then retry.',{clientVersion});
@@ -85,6 +93,7 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
         invalidate(); return setState('source-changed','A different Zotero library is open. Reconnect to browse it; saved citations keep their original source.',{clientVersion});
       }
       libraries.set('user/0',{libraryType:'user',libraryId:'0',name:'My Library'});
+      boundSource=source;
       return setState('connected','Connected to Zotero on this Mac.',{sourceInstance:source,clientVersion});
     } catch(error) {
       if(g!==generation || error.code==='CANCELLED') throw error;
@@ -94,7 +103,7 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
   async function json(route,g,signal) {
     check(g);
     const source=current.sourceInstance;
-    const result=await request(route,{signal:signal ? AbortSignal.any([controller.signal,signal]) : controller.signal,sourceInstance:source,port});
+    const result=await perform(route,{signal:signal ? AbortSignal.any([controller.signal,signal]) : controller.signal,sourceInstance:source,port});
     check(g);
     if(result.status===412 || (result.headers['zotero-server-id'] && result.headers['zotero-server-id']!==source)) {
       invalidate(); setState('source-changed','The Zotero library changed. Reconnect before browsing.');
@@ -103,7 +112,10 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
     if(result.status===403) { invalidate(); setState('disabled','Zotero local access is disabled. Enable it in Zotero Settings → Advanced.'); throw fault('UNAVAILABLE',current.message); }
     if(result.status===404) throw fault('NOT_FOUND','This reference or library is no longer available in Zotero. Its saved citation is preserved.');
     if(result.status!==200) throw fault('IO','Zotero could not complete this request. Retry.');
-    if(result.headers['zotero-server-id']!==source) throw fault('UNAVAILABLE','Zotero did not confirm its library identity. Reconnect.');
+    if(result.headers['zotero-server-id']!==source) {
+      invalidate();setState('unsupported','Zotero did not confirm its library identity. Reconnect.');
+      throw fault('UNAVAILABLE',current.message);
+    }
     try { return {data:JSON.parse(result.body),headers:result.headers}; }
     catch { throw fault('IO','Zotero returned an unreadable response.'); }
   }
@@ -150,6 +162,7 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
   }
   async function item(identity,g,signal) {
     validate(identitySchema,identity); check(g);
+    if(identity.libraryType==='user'&&identity.libraryId!=='0') throw fault('VALIDATION','Personal references must use the connected local library.');
     if(identity.sourceInstance!==current.sourceInstance) throw fault('STALE_REVISION','This citation belongs to another Zotero library. Its saved details are preserved.');
     // Saved group references may be refreshed without first paging through the group picker.
     const name=libraries.get(`${identity.libraryType}/${identity.libraryId}`)?.name || (identity.libraryType==='user'?'My Library':`Group ${identity.libraryId}`);
@@ -170,12 +183,13 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
   }
   function cancel(id) {
     sessions.get(id)?.abort(); cancelledSessions.set(id,now()+300000);
+    while(cancelledSessions.size>1000) cancelledSessions.delete(cancelledSessions.keys().next().value);
     for(const [key,value] of previews) if(value.sessionId===id) previews.delete(key);
     prune(); return {cancelled:true};
   }
   return {
     status:()=>probe(), connect:()=>probe(true),
-    disconnect:()=>{enabled=false; persist(); invalidate(); return setState('disconnected','Zotero disconnected. Saved experiment citations remain available.');},
+    disconnect:()=>{enabled=false; persist(); invalidate(); boundSource=null; return setState('disconnected','Zotero disconnected. Saved experiment citations remain available.');},
     libraries:listLibraries, collections, search, item, check, withSession, cancel,
     async selected(items,g,signal) {
       const result=[]; const seen=new Set();

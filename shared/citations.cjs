@@ -45,6 +45,10 @@ function normalizeItem(raw, identity, libraryLabel, now = new Date()) {
     throw Object.assign(new Error('This Zotero item is missing or is not a bibliographic reference.'), {code: 'NOT_FOUND'});
   }
   const d = raw.data;
+  if ((d.key && d.key !== raw.key) || (raw.library && (raw.library.type !== identity.libraryType ||
+    (identity.libraryType === 'group' && String(raw.library.id) !== identity.libraryId)))) {
+    throw Object.assign(new Error('Zotero returned an item from a different library.'), {code:'VALIDATION'});
+  }
   const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '') : '';
   return validate(itemSchema, { ...identity, snapshot: {
     version: 1, itemType: d.itemType, title: clean(d.title),

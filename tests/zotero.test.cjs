@@ -49,6 +49,14 @@ test('source mismatch invalidates generations without rebinding saved identity',
   await assert.rejects(()=>service.item({sourceInstance:'test-source',libraryType:'user',libraryId:'0',itemKey:raw.key},generation),e=>e.code==='STALE_REVISION');
   assert.throws(()=>service.check(generation),e=>e.code==='STALE_REVISION');
 });
+test('a profile change during a connection outage still invalidates the previous source',async t=>{
+  let offline=false, source='test-source';
+  const {service}=fake(t,()=>{if(offline)throw new Error('offline');return {status:200,headers:{...headers,'zotero-server-id':source}};});
+  const before=await service.connect();offline=true;assert.equal((await service.status()).state,'unavailable');
+  offline=false;source='new-source';const after=await service.status();
+  assert.equal(after.state,'source-changed');assert.notEqual(after.generation,before.generation);
+  assert.equal((await service.connect()).sourceInstance,'new-source');
+});
 test('refresh previews expire, bind their session and target, and never accept renderer metadata',async t=>{
   const {service}=fake(t);const {generation}=await service.connect();
   const identity={sourceInstance:'test-source',libraryType:'user',libraryId:'0',itemKey:raw.key};

@@ -1,7 +1,7 @@
 {
   "name": "labmate",
   "productName": "LabMate",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "A Mac-first local electronic lab notebook with encrypted backups",
@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && node scripts/check-desktop.mjs && vite build",
     "package:mac": "npm run build && node scripts/package.mjs",
+    "check:zotero": "node scripts/check-zotero.mjs",
     "check:ui": "node scripts/check-ui.mjs",
     "check:appearance": "node --experimental-strip-types scripts/check-appearance.mjs",
     "rebuild:native": "electron-rebuild --force --only better-sqlite3",
