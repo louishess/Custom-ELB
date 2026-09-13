@@ -94,7 +94,7 @@ test('starts empty, persists through reopen, and keeps numbering monotonic after
   assert.deepEqual(initial.notebooks, []);
   assert.deepEqual(initial.experiments, []);
   assert.deepEqual(initial.runs, []);
-  assert.equal(initial.schemaVersion, 3);
+  assert.equal(initial.schemaVersion, 4);
   assert.deepEqual(
     store.db.prepare('SELECT DISTINCT document_schema_version AS version FROM documents').all(),
     [],
@@ -142,7 +142,8 @@ test('starts empty, persists through reopen, and keeps numbering monotonic after
   const beforeReopen = store.snapshot();
   store.close();
   store.reopen();
-  assert.deepEqual(store.snapshot(), beforeReopen);
+  assert.notEqual(store.snapshot().libraryGeneration, beforeReopen.libraryGeneration);
+  assert.deepEqual(store.snapshot(), {...beforeReopen, libraryGeneration: store.libraryGeneration});
   assert.equal(store.db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
 });
 
@@ -283,7 +284,7 @@ test('keeps shared attachment objects until the final metadata reference is gone
   const one = attachment(first.run.id, hash);
   const two = attachment(second.run.id, hash);
   const addedOne = store.addAttachment(one);
-  assert.equal(addedOne.schemaVersion, 3);
+  assert.equal(addedOne.schemaVersion, 4);
   assert.equal(addedOne.attachments.some(item => item.id === one.id), true);
   assert.throws(() => store.addAttachment(one), error => error && error.code === 'VALIDATION');
   const addedTwo = store.addAttachment(two);
@@ -569,7 +570,7 @@ test('schema 1 libraries migrate transactionally to sage and retain records and 
   legacy.close();
   store.reopen();
   const migrated = store.snapshot();
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, 4);
   assert.equal(migrated.notebooks[0].id, notebook.id);
   assert.equal(migrated.preferences.appearance, 42);
   assert.equal(migrated.preferences.palette, 'sage');
@@ -597,8 +598,8 @@ test('schema 2 migration preserves the complete snapshot and allows persistent M
   assert.throws(() => legacy.prepare("UPDATE preferences SET palette = 'midnight'").run(), /CHECK constraint/);
   legacy.close();
   store.reopen();
-  assert.deepEqual(store.snapshot(), before);
-  assert.equal(store.db.pragma('user_version', {simple: true}), 3);
+  assert.deepEqual(store.snapshot(), {...before, libraryGeneration: store.libraryGeneration});
+  assert.equal(store.db.pragma('user_version', {simple: true}), 4);
   value(store.dispatch('preferences.update', {palette: 'midnight'}));
   store.close(); store.reopen();
   assert.deepEqual(store.snapshot().preferences, {...before.preferences, palette: 'midnight'});

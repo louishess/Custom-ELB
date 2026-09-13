@@ -624,6 +624,7 @@ function validateCandidateSchema(candidatePath, manifestSchemaVersion, store, op
         if (!candidateColumns.includes(column)) throw backupError('CORRUPT_BACKUP', 'The restored database schema is missing a column.');
       }
     }
+    if (manifestSchemaVersion >= 4) require('../../shared/citations.cjs').validateStoredCitations(db);
     if (manifestSchemaVersion >= 2) {
       const preferences = db.prepare('SELECT palette FROM preferences WHERE id = 1').get();
       if (!preferences || !palettesForVersion(manifestSchemaVersion).includes(preferences.palette)) {

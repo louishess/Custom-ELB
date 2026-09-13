@@ -17,6 +17,7 @@ try {
 const { SCHEMA_VERSION, PALETTES, columnsForVersion, palettesForVersion } = require('./schema.cjs');
 const { validateYieldInputs } = require('../../shared/yield.cjs');
 const { validateManualMaterial } = require('../../shared/material-yield.cjs');
+const citationData = require('../../shared/citations.cjs');
 const DATABASE_NAME = 'library.sqlite';
 const SECTION_IDS = ['information', 'method', 'notes', 'data'];
 const COLORS = new Set(['sage', 'blue', 'clay']);
@@ -400,6 +401,18 @@ const SCHEMA_SQL = [
     created_at TEXT NOT NULL,
     UNIQUE (run_id, source_instance, library_id, item_key)
   )`,
+  `CREATE TABLE IF NOT EXISTS experiment_citations (
+    id TEXT PRIMARY KEY,
+    experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    source_instance TEXT NOT NULL,
+    library_type TEXT NOT NULL CHECK (library_type IN ('user', 'group')),
+    library_id TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (experiment_id, source_instance, library_type, library_id, item_key)
+  )`,
   `CREATE TABLE IF NOT EXISTS schemes (
     id TEXT PRIMARY KEY,
     notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
@@ -507,23 +520,27 @@ class LibraryStore {
           database.pragma(`user_version = ${SCHEMA_VERSION}`);
         });
         migrate();
-      } else if (version === 1 || version === 2) {
+      } else if (version < SCHEMA_VERSION) {
         database.transaction(() => {
           this._verifySchema(database, version);
           // SQLite cannot alter a CHECK constraint. Rebuild only preferences,
           // within the same transaction as the version update, preserving values.
+          if (version < 3) {
           database.exec('ALTER TABLE preferences RENAME TO preferences_before_v3');
           database.exec(SCHEMA_SQL[SCHEMA_SQL.length - 1]);
           database.exec(`INSERT INTO preferences (id, appearance, layout, directory_view, sort, palette)
             SELECT id, appearance, layout, directory_view, sort, ${version === 1 ? "'sage'" : 'palette'}
             FROM preferences_before_v3`);
           database.exec('DROP TABLE preferences_before_v3');
+          }
+          database.exec(SCHEMA_SQL.find(sql => sql.includes('CREATE TABLE IF NOT EXISTS experiment_citations')));
           this._verifySchema(database);
           database.pragma(`user_version = ${SCHEMA_VERSION}`);
         })();
       } else {
         this._verifySchema(database);
       }
+      this.libraryGeneration = crypto.randomUUID();
       this.db = database;
       this._closed = false;
     } catch (error) {
@@ -541,6 +558,10 @@ class LibraryStore {
       if (rows.length === 0 || columns.some(column => !found.has(column))) {
         throw new StoreError('CORRUPT_BACKUP', `Library schema is missing the ${table} table or columns.`);
       }
+    }
+    if (version >= 4) {
+      try { citationData.validateStoredCitations(database); }
+      catch { throw new StoreError('CORRUPT_BACKUP', 'Library citation data is invalid.'); }
     }
     const preferences = database.prepare('SELECT COUNT(*) AS count FROM preferences WHERE id = 1').get();
     if (Number(preferences.count) !== 1) {
@@ -830,6 +851,14 @@ class LibraryStore {
     if (!preferenceRow) throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
     return {
       schemaVersion: SCHEMA_VERSION,
+      libraryGeneration: this.libraryGeneration,
+      citations: this.db.prepare('SELECT * FROM experiment_citations ORDER BY created_at, id').all().map(row => ({
+        id: row.id, experimentId: row.experiment_id, sourceInstance: row.source_instance,
+        libraryType: row.library_type, libraryId: row.library_id, itemKey: row.item_key,
+        snapshot: citationData.validate(citationData.snapshotSchema, JSON.parse(row.snapshot_json)),
+        createdAt: row.created_at, updatedAt: row.updated_at,
+      })),
+      legacyCitationCount: Number(this.db.prepare('SELECT COUNT(*) AS n FROM citation_associations').get().n),
       notebooks,
       experiments,
       runs,
@@ -1274,10 +1303,49 @@ class LibraryStore {
     return this._mutateRaw(() => this._removeAttachment(id));
   }
 
+  _changeCitations(method, input) {
+    let payload;
+    try { payload = citationData.validate(citationData.internalSchemas[method], input); }
+    catch { throw new StoreError('VALIDATION', 'Invalid citation data.'); }
+    if (payload.libraryGeneration !== this.libraryGeneration) throw new StoreError('STALE_REVISION', 'The library was reopened or restored. Reopen the citation picker.');
+    const experiment = this._requireRow('experiments', payload.experimentId, 'Experiment');
+    const notebook = this._requireRow('notebooks', experiment.notebook_id, 'Notebook');
+    if (experiment.trashed_at || notebook.trashed_at) throw new StoreError('NOT_FOUND', 'This experiment is in Trash.');
+    if (experiment.revision !== payload.expectedRevision) throw new StoreError('STALE_REVISION', 'The experiment changed. Reload its citation list and retry.');
+    const timestamp = nowTimestamp();
+    let changed = false;
+    if (method === 'citations.add') {
+      const insert = this.db.prepare(`INSERT OR IGNORE INTO experiment_citations
+        (id, experiment_id, source_instance, library_type, library_id, item_key, snapshot_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const item of payload.items) {
+        changed = !!insert.run(crypto.randomUUID(), experiment.id, item.sourceInstance, item.libraryType, item.libraryId,
+          item.itemKey, JSON.stringify(item.snapshot), timestamp, timestamp).changes || changed;
+      }
+    } else {
+      const row = this.db.prepare('SELECT * FROM experiment_citations WHERE id = ? AND experiment_id = ?').get(payload.id, experiment.id);
+      if (!row) throw new StoreError('NOT_FOUND', 'Citation association not found.');
+      if (method === 'citations.remove') this.db.prepare('DELETE FROM experiment_citations WHERE id = ?').run(row.id);
+      else {
+        const item = payload.item;
+        if (item.sourceInstance !== row.source_instance || item.libraryType !== row.library_type || item.libraryId !== row.library_id || item.itemKey !== row.item_key) {
+          throw new StoreError('VALIDATION', 'Refresh cannot change the citation source.');
+        }
+        this.db.prepare('UPDATE experiment_citations SET snapshot_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(item.snapshot), timestamp, row.id);
+      }
+      changed = true;
+    }
+    if (changed) this.db.prepare('UPDATE experiments SET revision = revision + 1, updated_at = ? WHERE id = ?').run(timestamp, experiment.id);
+  }
+
   dispatch(method, payload) {
     try {
       this._assertOpen();
       switch (method) {
+        case 'citations.add':
+        case 'citations.remove':
+        case 'citations.applyRefresh':
+          return this._mutate(() => this._changeCitations(method, payload));
         case 'records.snapshot':
           return ok(this._snapshotUnsafe());
         case 'records.createNotebook':

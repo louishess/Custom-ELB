@@ -327,7 +327,7 @@ test('rejects a future schema and cleans staging after cancellation', async t =>
   const envelope = readEnvelope(backupFile(fixture, created));
   const future = path.join(fixture.root, 'backups', 'future.labmatebackup');
   const futureBytes = Buffer.from(envelope.bytes);
-  const futureHeader = Buffer.from(JSON.stringify({ ...envelope.header, schemaVersion: 4 }), 'utf8');
+  const futureHeader = Buffer.from(JSON.stringify({ ...envelope.header, schemaVersion: 9 }), 'utf8');
   assert.equal(futureHeader.length, envelope.headerLength);
   futureHeader.copy(futureBytes, envelope.headerStart);
   fs.writeFileSync(future, futureBytes);
@@ -492,7 +492,7 @@ test('authenticated schema 1 backup restores into schema 3 and migrates its pale
   ], {schemaVersion: 1});
   value(fixture.store.dispatch('preferences.update', {palette: 'rose'}));
   const snapshot = await service.restore({source, password: 'correct horse', jobId: 'legacy-restore'});
-  assert.equal(snapshot.schemaVersion, 3);
+  assert.equal(snapshot.schemaVersion, 4);
   assert.equal(snapshot.preferences.palette, 'sage');
   assert.equal(snapshot.runs.length, 1);
   assert.equal(fixture.store.db.pragma('integrity_check', {simple: true}), 'ok');
@@ -520,8 +520,9 @@ test('authenticated schema 2 backup retains all preferences and records through 
   await assert.rejects(serviceFor(fixture).restore({source, password: 'wrong password'}), error => error.code === 'CORRUPT_BACKUP');
   assert.deepEqual(fixture.store.snapshot(), current);
   const snapshot = await serviceFor(fixture).restore({source, password: 'correct horse', jobId: 'legacy-v2-restore'});
-  assert.deepEqual(snapshot, before);
-  assert.equal(fixture.store.db.pragma('user_version', {simple: true}), 3);
+  assert.notEqual(snapshot.libraryGeneration, before.libraryGeneration);
+  assert.deepEqual(snapshot, {...before, libraryGeneration: snapshot.libraryGeneration});
+  assert.equal(fixture.store.db.pragma('user_version', {simple: true}), 4);
   assert.equal(fixture.store.db.pragma('integrity_check', {simple: true}), 'ok');
   value(fixture.store.dispatch('preferences.update', {palette: 'midnight'}));
 });
@@ -533,11 +534,12 @@ test('schema 3 Midnight Purple survives an encrypted backup and restore', async 
   const service = serviceFor(fixture);
   const created = await service.create({password: 'correct horse'});
   const source = backupFile(fixture, created);
-  assert.equal(readEnvelope(source).header.schemaVersion, 3);
+  assert.equal(readEnvelope(source).header.schemaVersion, 4);
   value(fixture.store.dispatch('preferences.update', {appearance: 0, palette: 'sage'}));
-  assert.deepEqual(await service.restore({source, password: 'correct horse'}), expected);
+  const restored = await service.restore({source, password: 'correct horse'});
+  assert.deepEqual(restored, {...expected, libraryGeneration: restored.libraryGeneration});
   fixture.store.close(); fixture.store.reopen();
-  assert.deepEqual(fixture.store.snapshot(), expected);
+  assert.deepEqual(fixture.store.snapshot(), {...expected, libraryGeneration: fixture.store.libraryGeneration});
 });
 
 test('schema 2 backup cannot claim the schema 3 Midnight Purple palette', async t => {
