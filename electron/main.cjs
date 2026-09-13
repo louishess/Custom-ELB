@@ -40,6 +40,8 @@ try { workerContract = require('./backend/worker.cjs'); } catch { /* source-only
 const z = require('zod');
 const { createDictationService, validateSession } = require('./dictation.cjs');
 const { calculateMarkedYield, validateManualMaterial } = require('../shared/material-yield.cjs');
+const citationData = require('../shared/citations.cjs');
+const { createZoteroService } = require('./zotero.cjs');
 
 const INVOKE_CHANNEL = 'labmate:invoke';
 const PROGRESS_CHANNEL = 'labmate:progress';
@@ -49,6 +51,7 @@ const CLOSE_REQUEST_CHANNEL = 'labmate:before-close';
 const CLOSE_RESULT_CHANNEL = 'labmate:before-close-result';
 
 const PUBLIC_METHODS = Object.freeze(new Set([
+  ...Object.keys(citationData.schemas),
   'records.snapshot',
   'records.createNotebook',
   'records.updateNotebook',
@@ -181,6 +184,7 @@ function isSafeJobId(value) {
 
 function publicPayloadError(method, payload) {
   if (!PUBLIC_METHODS.has(method)) return 'Unknown desktop method';
+  if (citationData.schemas[method]) return citationData.schemas[method].safeParse(payload).success ? null : 'Invalid citation request';
   if (method === 'yield.copy') return isPlainObject(payload) && Object.keys(payload).length === 2
     && ['starting', 'product'].every(key => isPlainObject(payload[key]) && Object.keys(payload[key]).every(field => ['text','manual'].includes(field))
       && typeof payload[key].text === 'string' && payload[key].text.length > 0 && payload[key].text.length <= 10000
@@ -767,6 +771,7 @@ function createBridgeRuntime({
   closeTimeoutMs = DEFAULT_CLOSE_TIMEOUT_MS,
   workerCloseTimeoutMs = DEFAULT_WORKER_CLOSE_TIMEOUT_MS,
   dictationFactory = createDictationService,
+  zoteroFactory = createZoteroService,
   } = {}) {
   const configStore = new LocalConfigStore({ appApi, safeStorageApi, fsApi, env });
   cleanAttachmentOpenCache(appApi, fsApi);
@@ -782,6 +787,15 @@ function createBridgeRuntime({
   let backupProgress = null;
   let shuttingDown = false;
   let allowWindowClose = false;
+  let restoringLibrary = false;
+  const zotero = zoteroFactory({configPath:path.join(root, 'zotero-connection.json'),
+    // An explicit isolated test profile is required for the local fixture server.
+    ...(env.LABMATE_LIBRARY_ROOT && env.LABMATE_TEST_PROFILE && /^\d{1,5}$/.test(env.LABMATE_ZOTERO_TEST_PORT || '')
+      && Number(env.LABMATE_ZOTERO_TEST_PORT) > 0 && Number(env.LABMATE_ZOTERO_TEST_PORT) <= 65535
+      ? {port:Number(env.LABMATE_ZOTERO_TEST_PORT)} : {}),
+  });
+  const citationJobs = new Map();
+  const citationOwners = new Map();
 
   const runtime = {
     root,
@@ -794,6 +808,51 @@ function createBridgeRuntime({
   };
 
   const speechOwners = new Map();
+  async function cancelCitations(sessionId) {
+    const result = zotero.cancel(sessionId);
+    const jobId = citationJobs.get(sessionId);
+    if (jobId) await runtime.worker.request('jobs.cancel', {jobId});
+    citationOwners.delete(sessionId);
+    return result;
+  }
+  runtime.cancelWindowCitations = contents => {
+    for (const [id, owner] of citationOwners) if (owner === contents) void cancelCitations(id);
+  };
+  async function invokeCitations(event, method, payload) {
+    const sessionId = payload?.sessionId ? `${event.sender.id}:${payload.sessionId}` : null;
+    if (method === 'zotero.cancel') return {ok:true, value:await cancelCitations(sessionId)};
+    if (restoringLibrary) return unavailableResult('Wait for the library restore to finish.');
+    if (method.startsWith('zotero.')) {
+      const name=method.slice('zotero.'.length);
+      if (name==='item') return {ok:true,value:await zotero.item(payload.identity,payload.generation)};
+      return {ok:true,value:await zotero[name](payload)};
+    }
+    const target={experimentId:payload.experimentId,expectedRevision:payload.expectedRevision,libraryGeneration:payload.libraryGeneration};
+    if (method==='citations.remove') return runtime.worker.request(method,payload);
+    citationOwners.set(sessionId,event.sender);
+    return zotero.withSession(sessionId,async signal=>{
+      const loaded=await runtime.worker.request('records.snapshot',undefined);
+      if(!loaded.ok) return loaded;
+      const experiment=loaded.value.experiments.find(item=>item.id===target.experimentId);
+      if(loaded.value.libraryGeneration!==target.libraryGeneration || experiment?.revision!==target.expectedRevision) return resultError('STALE_REVISION','The experiment or library changed. Reload the citation list.');
+      let internal;
+      if(method==='citations.add') {
+        const items=await zotero.selected(payload.items,payload.generation,signal);
+        internal={...target,items};
+      } else if(method==='citations.previewRefresh') {
+        const saved=loaded.value.citations.find(item=>item.id===payload.id && item.experimentId===target.experimentId);
+        if(!saved) return resultError('NOT_FOUND','Citation association not found.');
+        const identity={sourceInstance:saved.sourceInstance,libraryType:saved.libraryType,libraryId:saved.libraryId,itemKey:saved.itemKey};
+        const item=await zotero.item(identity,payload.generation,signal);
+        if(signal.aborted) return cancelledResult();
+        return {ok:true,value:zotero.preview(sessionId,target,saved.id,item,payload.generation)};
+      } else internal={...target,...zotero.consume(payload.token,sessionId,target)};
+      if(signal.aborted || event.sender.isDestroyed?.() || restoringLibrary) return cancelledResult();
+      const jobId=crypto.randomUUID(); citationJobs.set(sessionId,jobId);
+      try { return await runtime.worker.request(method,{...internal,jobId}); }
+      finally { citationJobs.delete(sessionId); }
+    });
+  }
   const speech = dictationFactory({
     helperPath: appApi?.isPackaged
       ? path.join(process.resourcesPath, 'LabMate Speech.app', 'Contents', 'MacOS', 'LabMate Speech')
@@ -947,6 +1006,9 @@ function createBridgeRuntime({
     const jobId = reserved.value;
     activeJobs.get(jobId).method = 'backups.restore';
     backupRunning = true;
+    restoringLibrary = true;
+    zotero.invalidate();
+    for (const id of citationOwners.keys()) void cancelCitations(id);
     const operation = (async () => {
       try {
         // Flush before opening the native picker so the restore invariant is
@@ -972,9 +1034,11 @@ function createBridgeRuntime({
           noLink: true,
         });
         if (!confirmation || confirmation.response !== 1) return dialogResultCancelled();
-        return runtime.worker.request('backups.restore', { password: payload.password, source: source.value, jobId });
+        return await runtime.worker.request('backups.restore', { password: payload.password, source: source.value, jobId });
       } finally {
         backupRunning = false;
+        restoringLibrary = false;
+        zotero.invalidate();
         releaseJob(jobId);
         backupInFlight = null;
       }
@@ -1110,6 +1174,7 @@ function createBridgeRuntime({
       if (!validation.ok) return validation;
       const window = getWindowForEvent(event, BrowserWindowApi);
       if (method.startsWith('dictation.')) return await invokeDictation(event, method, payload);
+      if (citationData.schemas[method]) return await invokeCitations(event, method, payload);
       switch (method) {
         case 'yield.copy': {
           const documents = Object.fromEntries(['starting', 'product'].map(role => [role, {type:'doc', content:[{type:'paragraph', content:[{type:'text', text:payload[role].text, marks:[{type:'yieldMaterial', attrs:{role,id:role,...(payload[role].manual ? {manual:payload[role].manual} : {})}}]}]}]}]));
@@ -1169,6 +1234,7 @@ function createBridgeRuntime({
     const flushed = await requestRendererFlush(window);
     if (!flushed) return;
     runtime.cancelWindowDictation(window?.webContents);
+    runtime.cancelWindowCitations(window?.webContents);
     if (window && typeof window === 'object') allowedCloseWindows.add(window);
     allowWindowClose = true;
     if (BrowserWindowApi && typeof BrowserWindowApi.getAllWindows === 'function') {
@@ -1197,6 +1263,7 @@ function createBridgeRuntime({
     }
     allowWindowClose = true;
     speech.dispose(); speechOwners.clear();
+    zotero.dispose();
     await runtime.worker.close(workerCloseTimeoutMs);
     if (appApi && typeof appApi.quit === 'function') appApi.quit();
     return true;
@@ -1268,8 +1335,8 @@ function createWindow(runtime) {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
-  window.webContents.on('render-process-gone', () => runtime.cancelWindowDictation(window.webContents));
-  window.webContents.on('destroyed', () => runtime.cancelWindowDictation(window.webContents));
+  window.webContents.on('render-process-gone', () => { runtime.cancelWindowDictation(window.webContents); runtime.cancelWindowCitations(window.webContents); });
+  window.webContents.on('destroyed', () => { runtime.cancelWindowDictation(window.webContents); runtime.cancelWindowCitations(window.webContents); });
   if (typeof window.on === 'function') window.on('close', event => { void runtime.closeWindow(event, window); });
   if (window.webContents) window.webContents.__labmateWindow = window;
   const demoQuery = process.env.LABMATE_DEMO_MODE === '1' ? '?demo=1' : '';
