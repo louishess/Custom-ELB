@@ -1,6 +1,6 @@
 # LabMate basic Zotero integration plan
 
-Status: proposed implementation plan, September 12, 2026. Planning only; the integration is not implemented and this planning pass has not accessed a personal Zotero library.
+Status: implemented in LabMate 0.5.0, September 12, 2026. This document preserves the approved design and its original planning baseline. Read `ZOTERO.md` for the working behavior and `VALIDATION.md` for acceptance evidence, including the authorized read-only live check with one personal-library reference.
 
 Build a Zotero integration inside LabMate that lets the user browse their connected desktop library and associate references with an experiment. The user confirmed that **citations belong to the whole experiment and appear in every run**.
 

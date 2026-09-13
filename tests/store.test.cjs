@@ -566,6 +566,7 @@ test('schema 1 libraries migrate transactionally to sage and retain records and 
   store.close();
   const legacy = new BetterSqlite3(path.join(root, 'library.sqlite'));
   legacy.exec('ALTER TABLE preferences DROP COLUMN palette');
+  legacy.exec('DROP TABLE IF EXISTS experiment_citations');
   legacy.pragma('user_version = 1');
   legacy.close();
   store.reopen();

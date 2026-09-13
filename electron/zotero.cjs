@@ -34,7 +34,7 @@ function requestLocal(route, {signal, sourceInstance, port = 23119, timeout = 50
   });
 }
 
-function createZoteroService({configPath, request = requestLocal, port = 23119, now = () => Date.now()} = {}) {
+function createZoteroService({configPath, request = requestLocal, port = 23119, now = () => Date.now(), onInvalidate = () => {}} = {}) {
   let enabled=false;
   try { enabled=JSON.parse(fs.readFileSync(configPath,'utf8')).enabled===true; } catch { /* first use */ }
   let generation=crypto.randomUUID();
@@ -61,11 +61,13 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
     finally { try { fs.unlinkSync(temp); } catch {} }
   }
   function invalidate() {
+    onInvalidate();
     controller.abort(); controller=new AbortController(); generation=crypto.randomUUID();
     for (const c of sessions.values()) c.abort();
     sessions.clear(); previews.clear(); libraries.clear();
   }
   function setState(state,message,extra={}) { current={state,message,enabled,generation,...extra}; return {...current}; }
+  function failedState(state,message,extra={}) { invalidate(); return setState(state,message,extra); }
   function check(g) {
     if (g!==generation) throw fault('STALE_REVISION','The Zotero connection changed. Reopen the picker.');
     if (current.state!=='connected') throw fault('UNAVAILABLE',current.message);
@@ -83,11 +85,11 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
       const response=await perform('/api/',{signal:controller.signal,port});
       if (g!==generation) throw fault('CANCELLED','Connection check cancelled.');
       const clientVersion=typeof response.headers['x-zotero-version']==='string' ? response.headers['x-zotero-version'].slice(0,128) : undefined;
-      if (response.status===403) return setState('disabled','In Zotero Settings → Advanced, enable “Allow other applications on this computer to communicate with Zotero”, then retry.',{clientVersion});
-      if (response.status!==200) return setState('failed','Zotero could not complete the connection check.',{clientVersion});
+      if (response.status===403) return failedState('disabled','In Zotero Settings → Advanced, enable “Allow other applications on this computer to communicate with Zotero”, then retry.',{clientVersion});
+      if (response.status!==200) return failedState('failed','Zotero could not complete the connection check.',{clientVersion});
       const source=response.headers['zotero-server-id'];
       if (response.headers['zotero-api-version']!=='3' || typeof source!=='string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(source)) {
-        return setState('unsupported','This Zotero build does not expose API v3 with stable library identity. Use a supported Zotero build.',{clientVersion});
+        return failedState('unsupported','This Zotero build does not expose API v3 with stable library identity. Use a supported Zotero build.',{clientVersion});
       }
       if (previous && previous!==source && !explicit) {
         invalidate(); return setState('source-changed','A different Zotero library is open. Reconnect to browse it; saved citations keep their original source.',{clientVersion});
@@ -97,7 +99,7 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
       return setState('connected','Connected to Zotero on this Mac.',{sourceInstance:source,clientVersion});
     } catch(error) {
       if(g!==generation || error.code==='CANCELLED') throw error;
-      return setState('unavailable','Open Zotero on this Mac, then retry.');
+      return failedState('unavailable','Open Zotero on this Mac, then retry.');
     }
   }
   async function json(route,g,signal) {

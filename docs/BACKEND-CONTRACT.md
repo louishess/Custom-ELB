@@ -14,11 +14,13 @@ PM-owned shared contract is `shared/contracts.ts`. Coordinate amendments with PM
 
 ## Cross-cutting frozen choices
 
-Storage schemaVersion 3 (schemas 1 and 2 remain restorable and migrate transactionally); preferences add palette with default sage; section JSON root type doc, empty paragraph default. Revision increments on each record change. Run save includes all four documents in single transaction. Independent metadata changes can yield STALE_REVISION: UI must retain pending draft and offer reload/retry, not silently replace content. Notebook/experiment renames don't change numeric IDs. Repeat copies Information and Method; date supplied by renderer validated, author/title copied, Notes/Data empty, no attachments or scheme memberships copied. Scheme membership is ordered UUID list, same notebook only, unique. Trash restore requires ancestors active (UI offers restore parent first); purge only trashed records and validates revision. Initial setup includes author entry field; no accounts. Trash permanence does not remove existing backups.
+Storage schemaVersion 4 (schemas 1, 2 and 3 remain restorable and migrate transactionally); preferences add palette with default sage; section JSON root type doc, empty paragraph default. Revision increments on each record change. Run save includes all four documents in single transaction. Independent metadata changes can yield STALE_REVISION: UI must retain pending draft and offer reload/retry, not silently replace content. Notebook/experiment renames don't change numeric IDs. Repeat copies Information and Method; date supplied by renderer validated, author/title copied, Notes/Data empty, no attachments or scheme memberships copied. References belong to the experiment and are therefore shared by repeats without copying. Scheme membership is ordered UUID list, same notebook only, unique. Trash restore requires ancestors active (UI offers restore parent first); purge only trashed records and validates revision. Initial setup includes author entry field; no accounts. Trash permanence does not remove existing backups.
 
 Installation/package/lockfile and shared types belong to the primary integrator.
 All tests use disposable libraries and destinations; no real Box writes or
-personal records during automated validation.
+personal records during normal automated validation. The separately opted-in
+live Zotero check may read one authorized reference into a disposable library;
+it never modifies Zotero items or the working LabMate library.
 
 ## Version 0.4 additions
 
@@ -48,7 +50,50 @@ personal records during automated validation.
   progress plus attempt/failure details. A local verified copy never claims
   cloud-upload completion.
 
-Storage-only citation_associations v1 table reserves id, run_id (FK cascade), source_instance, library_id, item_key, snapshot_json and created_at, unique per run/source/library/item. It starts empty and has no renderer methods until Zotero integration.
+The legacy run-owned `citation_associations` table is retained unchanged during
+migration. Its unexpected rows contribute to `legacyCitationCount` and are
+flagged for review; new citation operations do not read them as experiment links.
+
+## Zotero and experiment references (0.5.0)
+
+- `shared/citations.cjs` owns strict public/internal schemas, bibliography v1
+  normalization, source identity validation, safe links and reference text.
+  `LibrarySnapshot` includes `citations`, `legacyCitationCount`, and a fresh
+  `libraryGeneration` UUID on every store open/reopen.
+- Schema 4 adds `experiment_citations`, with an experiment foreign key and
+  uniqueness on experiment/source instance/library type/library ID/item key.
+  Add/remove/refresh validate active ancestors, the current library generation
+  and expected experiment revision. A real change increments the experiment
+  revision, leaving run/document revisions alone. Duplicate adds are no-ops.
+  Stored bibliography is validated on open and before restore replacement.
+- `electron/zotero.cjs` exports `createZoteroService`. Main performs bounded
+  asynchronous GETs to `127.0.0.1:23119/api/` using native HTTP, localhost Host,
+  API v3, a LabMate User-Agent and the probed `Zotero-Server-ID`. No redirects,
+  writes, cookies, credentials, renderer URLs or database-file access. Lists
+  have 50 records/page; responses are capped at 4 MiB, requests at 5 seconds,
+  and transport concurrency at 8. Only metadata fields needed by v1 persist.
+- Public `zotero` methods are status/connect/disconnect/cancel/libraries/
+  collections/search/item. Main fetches authoritative metadata for
+  `citations.add`, creates opaque previews for `citations.previewRefresh`,
+  and consumes them for `citations.applyRefresh`. Removal uses only saved data.
+  Renderers send identities, never authoritative bibliographic snapshots.
+- Connection generation and per-window picker sessions bind asynchronous
+  operations. Preview tokens expire after five minutes and bind the source,
+  session, citation, experiment revision and library generation. Main sends
+  normalized mutations to the serial worker with cancellable job IDs.
+  Disconnect, source invalidation and restore cancel outstanding work.
+  Picker/window closure cancels its mutation reads, previews and queued writes;
+  stale browsing responses are ignored by the renderer. Restore's guard remains active
+  through the awaited worker replacement. Never replay stale mutations.
+- The enabled preference is stored in local `zotero-connection.json`, outside
+  backup snapshots. Temporary browsing data stays in memory. Saved references
+  remain usable offline and retain original source identity across restore.
+  Source/library/version values from Desktop are not Web API identities or
+  versions. Personal requests use the canonical local alias `users/0`.
+- The shared export document appends a References section to every selected
+  run that has experiment citations. All five writers use saved metadata and
+  never fetch Zotero during export. DOI and URL values are scheme-validated;
+  bibliography text is escaped through each writer's existing rendering path.
 
 ## Material yield markup (0.4.2)
 

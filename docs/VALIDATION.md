@@ -1,3 +1,54 @@
+# LabMate 0.5.0 Zotero acceptance — September 12, 2026
+
+The basic Zotero integration is implemented: a local read-only library picker,
+experiment-wide citations shared by all runs, reviewed metadata refresh,
+offline references in all five exports, and schema-4 encrypted backup/recovery.
+The final combined arm64 review app preserves the concurrent white export work.
+The historical isolated export report below describes a different artifact.
+
+- App: `out/LabMate-darwin-arm64/LabMate.app`
+- ZIP: `artifacts/LabMate-0.5.0-macOS-arm64.zip`
+- Setup and compatibility: `ZOTERO.md`
+- Fixture workflow evidence and four screenshots: `artifacts/zotero/`
+- Live report: `artifacts/zotero/live-checks.json`
+- Package hashes/source comparison: `artifacts/zotero/release-manifest.json`
+
+| Check | Result |
+| --- | --- |
+| TypeScript, desktop syntax, Vite, native helper and arm64 package | Passed |
+| Backend, migrations, recovery, bridge, transport and exports | 157 passed, zero failures/skips |
+| Final packaged native SQLite and encrypted recovery smoke | 2 passed |
+| Packaged citation fixture workflows | 8 passed; zero renderer errors |
+| Packaged existing functional workflows | 12 passed |
+| Packaged existing UI workflows | 13 passed |
+| Appearance continuum | All 707 palette/brightness combinations passed; minimum contrast 4.50:1 |
+| Authorized live Zotero acceptance | 5 passed against running build `11.0.SOURCE.1e4dabc91` |
+
+Live acceptance enabled Zotero's local application access with the user's
+explicit permission and read one existing personal-library reference. The
+packaged UI connected, added/refreshed the reference, shared it with a new run,
+retained it after disconnect/restart, exported all five formats offline, and
+restored it through Settings from an encrypted archive. All LabMate records,
+exports and recovery files were disposable and removed. No Zotero item or
+working LabMate experiment was changed. Zotero's approved access setting remains
+enabled. The report contains no item identifiers, titles or bibliography.
+
+Groups, nested collections, list pagination, missing items, source changes,
+disabled access and cancellation use controlled fixtures. Compatibility with
+other running Zotero builds is not implied by the one-client live result.
+References retain metadata snapshots rather than silently tracking Zotero edits.
+
+Schema 1–3 restore tests use actual old tables without the new citation table;
+schema 4 validates bibliographic data before replacement. A regression check
+verifies that disconnect cancels a citation mutation queued behind another job.
+Narrow Midnight Purple screenshots and keyboard selection were inspected.
+
+The application remains a local Apple Silicon review build. Developer ID
+signing/notarization, clean-Mac installation, real Box cloud upload/download
+and other previously recorded distribution checks remain separate milestones.
+
+---
+
 # LabMate 0.4.3 Midnight Purple validation
 
 Verified 2026-09-10T00:16:51.514950+00:00. Local Apple Silicon review build on `ec51ff7`; changes remain uncommitted and unpublished.

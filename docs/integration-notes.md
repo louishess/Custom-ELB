@@ -1,24 +1,26 @@
-# Deferred integration boundaries
+# Integration boundaries
 
 The local notebook, Tiptap editing, database, attachments, previews, local
 exports and encrypted backups are implemented. See `HANDOFF.md` for current
-behavior and evidence. The following integrations remain separate milestones.
+behavior and evidence. Working and future integration boundaries follow.
 
 ## Zotero
 
-Use a read-only picker through Zotero's documented local API after checking the
-actual running client's availability, permissions and version. Do not read or
-write the Zotero SQLite database directly. Associate references using source
-instance, library and item identifiers plus a bibliographic snapshot; the
-storage-only citation association table reserves these fields. No real Zotero
-library has been accessed or modified by this implementation.
+LabMate 0.5.0 implements a read-only picker through Zotero's documented local
+API, with capability checks against the actual running client. Experiment-wide
+references use source instance, library type/ID and item key plus a saved
+bibliography. Schema 4 persists those associations, supports offline exports,
+and includes references in encrypted backup/recovery. Zotero's database files
+are never accessed. An authorized live check read one personal-library
+reference into a disposable LabMate experiment without modifying Zotero items.
+Read `ZOTERO.md` for setup, compatibility, behavior and validation limits.
 
-An optional companion plugin could add Send to LabMate after an association
-interface exists. It is not a prerequisite for a notebook-side picker. Keep
-future local API requests behind a narrow desktop interface; the renderer
-must not gain arbitrary network or filesystem access.
+An optional companion plugin could add Send to LabMate later. Requests already
+use a narrow desktop interface; keep arbitrary network and filesystem access
+out of the renderer. PDF/annotation import, inline citations, style selection,
+and a Zotero Web API connection remain future work.
 
-References for future verification:
+Official API references:
 - [Zotero local API](https://www.zotero.org/support/dev/web_api/v3/local_api)
 - [Zotero plugin development](https://www.zotero.org/support/dev/client_coding/plugin_development)
 

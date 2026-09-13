@@ -38,4 +38,19 @@ test('main fetches authoritative metadata, binds refresh to the requesting windo
   s=unwrap(await call('citations.applyRefresh',{...before,token:preview.token,sessionId}));assert.equal(s.citations[0].snapshot.title,'Updated title');
   unwrap(await call('zotero.cancel',{sessionId}));
   assert.equal((await call('citations.add',{...target(),generation:status.generation,sessionId,items:[identity]})).error.code,'CANCELLED');
+  // Simulate a citation mutation queued behind a backup. Disconnect must send
+  // cancellation into the worker queue, not only abort the completed HTTP read.
+  const originalRequest=runtime.worker.request;
+  let queuedResolve, entered;
+  const queued=new Promise(resolve=>{entered=resolve;});
+  let cancelled=false;
+  runtime.worker.request=async(method,payload)=>{
+    if(method==='citations.add') return new Promise(resolve=>{queuedResolve=resolve;entered();});
+    if(method==='jobs.cancel') {cancelled=true;queuedResolve({ok:false,error:{code:'CANCELLED',message:'Queued write cancelled'}});return {ok:true,value:{cancelled:true}};}
+    return originalRequest(method,payload);
+  };
+  const pending=call('citations.add',{...target(),generation:status.generation,sessionId:crypto.randomUUID(),items:[identity]});
+  await queued;unwrap(await call('zotero.disconnect'));
+  assert.equal((await pending).error.code,'CANCELLED');assert.equal(cancelled,true);
+  assert.equal(store.snapshot().citations.length,1);
 });

@@ -5,6 +5,7 @@
 // replacing the older CHECK constraint.
 function makeSchema2(database) {
   database.transaction(() => {
+    database.exec('DROP TABLE IF EXISTS experiment_citations');
     database.exec(`ALTER TABLE preferences RENAME TO current_preferences;
       CREATE TABLE preferences (
         id INTEGER PRIMARY KEY CHECK (id = 1),

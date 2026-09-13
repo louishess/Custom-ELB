@@ -114,6 +114,12 @@ try {
     assert.match(await page.locator('.tiptap').first().innerText(),/Draft survives citation removal/);
     assert.equal(await page.locator('.citation-chips').getByRole('button',{name:title,exact:true}).count(),0);
   });
+  await check('Disabled local access is explicit and empty searches never show fictional references',async()=>{
+    disabled=true;await page.getByRole('button',{name:'Add citation',exact:true}).click();await page.getByRole('button',{name:'Connect Zotero',exact:true}).click();
+    await page.getByText(/enable “Allow other applications/).waitFor();assert.equal(await page.locator('.citation-result').count(),0);
+    disabled=false;await page.getByRole('button',{name:'Retry connection',exact:true}).click();await page.getByLabel('Search Zotero references',{exact:true}).fill('No such reference');
+    await page.getByText('No references on this page.',{exact:true}).waitFor();
+  });
   await check('Narrow Midnight Purple layout supports keyboard selection and modal dismissal',async()=>{
     await page.getByRole('button',{name:'Done',exact:true}).click();
     await api('preferences.update',{palette:'midnight',appearance:100,layout:'tabs'});
@@ -124,12 +130,6 @@ try {
     assert.equal(await page.locator('.modal').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
     await page.screenshot({path:path.join(output,'04-dark-narrow.png')});
     await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
-  });
-  await check('Disabled local access is explicit and empty searches never show fictional references',async()=>{
-    disabled=true;await page.getByRole('button',{name:'Add citation',exact:true}).click();await page.getByRole('button',{name:'Connect Zotero',exact:true}).click();
-    await page.getByText(/enable “Allow other applications/).waitFor();assert.equal(await page.locator('.citation-result').count(),0);
-    disabled=false;await page.getByRole('button',{name:'Retry connection',exact:true}).click();await page.getByLabel('Search Zotero references',{exact:true}).fill('No such reference');
-    await page.getByText('No references on this page.',{exact:true}).waitFor();
   });
   assert.deepEqual(errors,[]);assert.ok(requests.every(r=>r.method==='GET'&&r.path.startsWith('/api/')));
   await writeFile(path.join(output,'checks.json'),JSON.stringify({checks,errors,requestCount:requests.length,packaged:!!process.env.LABMATE_APP_BINARY},null,2));

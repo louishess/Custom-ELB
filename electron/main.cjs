@@ -788,14 +788,17 @@ function createBridgeRuntime({
   let shuttingDown = false;
   let allowWindowClose = false;
   let restoringLibrary = false;
+  const citationJobs = new Map();
+  const citationOwners = new Map();
   const zotero = zoteroFactory({configPath:path.join(root, 'zotero-connection.json'),
+    onInvalidate: () => {
+      for (const jobId of citationJobs.values()) void runtime.worker?.request('jobs.cancel', {jobId});
+    },
     // An explicit isolated test profile is required for the local fixture server.
     ...(env.LABMATE_LIBRARY_ROOT && env.LABMATE_TEST_PROFILE && /^\d{1,5}$/.test(env.LABMATE_ZOTERO_TEST_PORT || '')
       && Number(env.LABMATE_ZOTERO_TEST_PORT) > 0 && Number(env.LABMATE_ZOTERO_TEST_PORT) <= 65535
       ? {port:Number(env.LABMATE_ZOTERO_TEST_PORT)} : {}),
   });
-  const citationJobs = new Map();
-  const citationOwners = new Map();
 
   const runtime = {
     root,
