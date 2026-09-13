@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, BookOpen, Check, FileText, FolderArchive, LayoutList, Link, List, Monitor, Moon, ShieldCheck, Sun, Trash2, Upload, XCircle } from 'lucide-react';
 import ZoteroPanel from './ZoteroPanel';
 import ZoteroConnection from './ZoteroConnection';
+import CitationSettings from './CitationSettings';
 import PalettePicker from './PalettePicker';
 import AttachmentPreview from './AttachmentPreview';
 import { AttachmentIcon, Modal, ModalErrorContext } from './components';
@@ -80,11 +81,11 @@ export function Panels(props: PanelsProps) {
 function SettingsPanel({ initialTab = 'general', onClose, layout, setLayout, appearance, setAppearance, snapshot, mode, onSnapshot, onRestored, onError, onBeforeOperation }: PanelsProps & { initialTab?: SettingsTab }) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   const updatePreference = async (changes: Partial<LibrarySnapshot['preferences']>) => {
-    if (mode === 'demo') { onSnapshot({ ...snapshot, preferences: { ...snapshot.preferences, ...changes } }); return; }
+    if (mode === 'demo') { const next={ ...snapshot, preferences: { ...snapshot.preferences, ...changes } }; onSnapshot(next); return next; }
     if (!(await onBeforeOperation())) return;
     const result = await getAPI()?.preferences.update(changes);
     if (!result) { onError(apiUnavailable().message); return; }
-    if (result.ok) onSnapshot(result.value);
+    if (result.ok) { onSnapshot(result.value); return result.value; }
     else onError(result.error.message);
   };
   return <Modal title="Settings" eyebrow="Make room for your work" onClose={onClose} wide>
@@ -101,7 +102,7 @@ function SettingsPanel({ initialTab = 'general', onClose, layout, setLayout, app
       <p className="muted-note">Preferences are saved to this library and apply when LabMate opens again.</p>
       <div className="settings-about"><BookOpen size={19} /><div><strong>LabMate</strong><p>Local electronic lab notebook</p></div><span className={`soft-badge ${mode === 'demo' ? '' : 'working-badge'}`}>{mode === 'demo' ? 'Demonstration' : 'Local library'}</span></div>
     </div>}
-    {tab === 'integrations' && <div className="modal-body"><ZoteroConnection readOnly={mode === 'demo'} /><p className="field-help">Choose references from Citation library or Add citation in an experiment. Saved references remain available when Zotero is closed.</p></div>}
+    {tab === 'integrations' && <div className="modal-body"><ZoteroConnection readOnly={mode === 'demo'} /><CitationSettings snapshot={snapshot} readOnly={mode === 'demo'} updatePreference={updatePreference} onSnapshot={onSnapshot}/><p className="field-help">Choose references from Citation library or Add citation in an experiment. Saved references remain available when Zotero is closed.</p></div>}
     {tab === 'backups' && <BackupSettings mode={mode} onRestored={onRestored} onError={onError} onBeforeOperation={onBeforeOperation} />}
     {tab === 'trash' && <TrashSettings snapshot={snapshot} mode={mode} onSnapshot={onSnapshot} onError={onError} onBeforeOperation={onBeforeOperation} />}
     <div className="modal-footer"><span>{mode === 'demo' ? 'Demonstration mode changes stay in memory.' : 'Settings are saved as you change them.'}</span><button className="button button-primary" onClick={onClose}>Done</button></div>

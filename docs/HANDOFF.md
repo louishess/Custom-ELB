@@ -1,10 +1,11 @@
 # LabMate functional application handoff
 
-Updated September 12, 2026. Version 0.5.0 adds a working read-only Zotero
-integration with experiment-wide citations, offline references in every export,
-and schema-4 backup/recovery. Integration changes are committed locally; the
-concurrent white export pass remains a separate working-tree change. Read
-`ZOTERO.md` for setup, supported behavior and live acceptance boundaries.
+Updated September 12, 2026. Version 0.5.1 adds citation-label and citation-style
+settings to the working Zotero integration. No style is preselected. Users may
+show paper titles or Zotero-formatted citations, choose a style, and retain
+formatted labels offline. Schema 5 preserves these preferences and cached
+labels in backups. The white export presentation work is now integrated.
+Read `ZOTERO.md` for setup, behavior and live acceptance boundaries.
 Preserve the frontend, seven-palette appearance continuum, and local-first
 architecture. Read `BACKEND-CONTRACT.md` before changing subsystem interfaces.
 See `VALIDATION.md` for the evidence and remaining live acceptance checks.
@@ -64,7 +65,7 @@ Appearance offers Original Sage, Ocean, Lavender, Terracotta, Rose, Graphite and
 All seven preserve the 0–100 slider and semantic notebook/status colors. Schema 3
 adds Midnight Purple to the saved palette choices. Schema 1 libraries migrate to
 Original Sage; schema 2 libraries keep their saved palette and brightness.
-Authenticated backups from schemas 1–4 are supported; future schemas are rejected.
+Authenticated backups from schemas 1–5 are supported; future schemas are rejected.
 Schema 4 adds experiment citations without changing palette choices. All runs
 of an experiment share its references; a new independent experiment starts empty.
 
@@ -211,7 +212,7 @@ notarization remain separate manual/distribution checks.
 
 Google Docs integration, scientific viewers, public signing/notarization,
 Intel packaging and updates remain deferred. Zotero-side Send to LabMate,
-inline citations, styles and PDF/annotation import remain future extensions;
+inline citations, export bibliography styles and PDF/annotation import remain future extensions;
 the basic LabMate-side Zotero picker and experiment associations work now.
 No hosted backend, live cloud sync, multiuser access, electronic signatures or
 regulated-lab compliance claims are included. See `integration-notes.md`.

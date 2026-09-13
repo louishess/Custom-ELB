@@ -23,7 +23,7 @@ const CLOSE_RESULT_CHANNEL = 'labmate:before-close-result';
 
 const NAMESPACE_METHODS = Object.freeze({
   zotero: Object.freeze(['status', 'connect', 'disconnect', 'cancel', 'libraries', 'collections', 'search', 'item']),
-  citations: Object.freeze(['add', 'remove', 'previewRefresh', 'applyRefresh']),
+  citations: Object.freeze(['add', 'remove', 'previewRefresh', 'applyRefresh', 'refreshLabel']),
   records: Object.freeze(['snapshot', 'createNotebook', 'updateNotebook', 'createExperiment', 'updateExperiment', 'repeatRun', 'updateRun']),
   documents: Object.freeze(['save']),
   yield: Object.freeze(['copy']),

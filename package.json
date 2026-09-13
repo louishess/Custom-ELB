@@ -1,7 +1,7 @@
 {
   "name": "labmate",
   "productName": "LabMate",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "description": "A Mac-first local electronic lab notebook with encrypted backups",

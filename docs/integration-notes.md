@@ -6,10 +6,10 @@ behavior and evidence. Working and future integration boundaries follow.
 
 ## Zotero
 
-LabMate 0.5.0 implements a read-only picker through Zotero's documented local
+LabMate 0.5.1 implements a read-only picker through Zotero's documented local
 API, with capability checks against the actual running client. Experiment-wide
 references use source instance, library type/ID and item key plus a saved
-bibliography. Schema 4 persists those associations, supports offline exports,
+bibliography. Schema 5 persists associations and citation-label/style preferences, supports offline exports,
 and includes references in encrypted backup/recovery. Zotero's database files
 are never accessed. An authorized live check read one personal-library
 reference into a disposable LabMate experiment without modifying Zotero items.
@@ -17,7 +17,7 @@ Read `ZOTERO.md` for setup, compatibility, behavior and validation limits.
 
 An optional companion plugin could add Send to LabMate later. Requests already
 use a narrow desktop interface; keep arbitrary network and filesystem access
-out of the renderer. PDF/annotation import, inline citations, style selection,
+out of the renderer. PDF/annotation import, inline citations, export bibliography styles,
 and a Zotero Web API connection remain future work.
 
 Official API references:

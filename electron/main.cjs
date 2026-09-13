@@ -827,7 +827,7 @@ function createBridgeRuntime({
     if (restoringLibrary) return unavailableResult('Wait for the library restore to finish.');
     if (method.startsWith('zotero.')) {
       const name=method.slice('zotero.'.length);
-      if (name==='item') return {ok:true,value:await zotero.item(payload.identity,payload.generation)};
+      if (name==='item') return {ok:true,value:await zotero.item(payload.identity,payload.generation,undefined,payload.style)};
       return {ok:true,value:await zotero[name](payload)};
     }
     const target={experimentId:payload.experimentId,expectedRevision:payload.expectedRevision,libraryGeneration:payload.libraryGeneration};
@@ -839,20 +839,26 @@ function createBridgeRuntime({
       const experiment=loaded.value.experiments.find(item=>item.id===target.experimentId);
       if(loaded.value.libraryGeneration!==target.libraryGeneration || experiment?.revision!==target.expectedRevision) return resultError('STALE_REVISION','The experiment or library changed. Reload the citation list.');
       let internal;
+      const style=loaded.value.preferences.citationStyle || undefined;
       if(method==='citations.add') {
-        const items=await zotero.selected(payload.items,payload.generation,signal);
+        const items=await zotero.selected(payload.items,payload.generation,signal,style);
         internal={...target,items};
-      } else if(method==='citations.previewRefresh') {
+      } else if(method==='citations.previewRefresh' || method==='citations.refreshLabel') {
         const saved=loaded.value.citations.find(item=>item.id===payload.id && item.experimentId===target.experimentId);
         if(!saved) return resultError('NOT_FOUND','Citation association not found.');
         const identity={sourceInstance:saved.sourceInstance,libraryType:saved.libraryType,libraryId:saved.libraryId,itemKey:saved.itemKey};
-        const item=await zotero.item(identity,payload.generation,signal);
+        if(method==='citations.refreshLabel' && !style) return resultError('VALIDATION','Choose a citation style in Settings first.');
+        const item=await zotero.item(identity,payload.generation,signal,style);
         if(signal.aborted) return cancelledResult();
-        return {ok:true,value:zotero.preview(sessionId,target,saved.id,item,payload.generation)};
+        if(method==='citations.previewRefresh') return {ok:true,value:zotero.preview(sessionId,target,saved.id,item,payload.generation)};
+        if(!item.snapshot.formattedCitation) return resultError('UNAVAILABLE','Zotero did not return a formatted citation. The saved reference is unchanged.');
+        // Updating a display label must not silently accept new bibliographic
+        // details; those still require the ordinary refresh preview.
+        internal={...target,id:saved.id,item:{...identity,snapshot:{...saved.snapshot,formattedCitation:item.snapshot.formattedCitation}}};
       } else internal={...target,...zotero.consume(payload.token,sessionId,target)};
       if(signal.aborted || event.sender.isDestroyed?.() || restoringLibrary) return cancelledResult();
       const jobId=crypto.randomUUID(); citationJobs.set(sessionId,jobId);
-      try { return await runtime.worker.request(method,{...internal,jobId}); }
+      try { return await runtime.worker.request(method==='citations.refreshLabel'?'citations.applyRefresh':method,{...internal,jobId}); }
       finally { citationJobs.delete(sessionId); }
     });
   }

@@ -18,7 +18,7 @@ test('main fetches authoritative metadata, binds refresh to the requesting windo
   unwrap(store.dispatch('records.createExperiment',{notebookId:notebook.id,label:'A',title:'Experiment',date:'2026-09-12',author:'Researcher'}));
   let title='Verified source title';
   const runtime=createBridgeRuntime({root,env:{LABMATE_LIBRARY_ROOT:root,LABMATE_TEST_PROFILE:path.join(root,'profile')},appApi:{getPath:()=>root},
-    zoteroFactory:options=>createZoteroService({...options,request:async route=>({status:200,headers:{'zotero-api-version':'3','zotero-server-id':'source'},body:route==='/api/'?'':JSON.stringify({key:'ABCD1234',version:1,data:{itemType:'journalArticle',title}})})})});
+    zoteroFactory:options=>createZoteroService({...options,request:async route=>({status:200,headers:{'zotero-api-version':'3','zotero-server-id':'source'},body:route==='/api/'?'':JSON.stringify({key:'ABCD1234',version:1,citation:'(Research Group, 2026)',data:{itemType:'journalArticle',title}})})})});
   runtime.worker={request:async(method,payload)=>method==='jobs.cancel'?{ok:true,value:{cancelled:true}}:store.dispatch(method,payload)};
   const frame={url:'elb://app/index.html'};const sender={id:7,mainFrame:frame,getURL:()=>frame.url};const event={sender,senderFrame:frame};
   const call=async(method,input,override=event)=>runtime.handleInvoke(override,method,input);
@@ -36,6 +36,14 @@ test('main fetches authoritative metadata, binds refresh to the requesting windo
   const foreign={sender:{...sender,id:8},senderFrame:frame};
   assert.equal((await call('citations.applyRefresh',{...before,token:preview.token,sessionId},foreign)).ok,false);
   s=unwrap(await call('citations.applyRefresh',{...before,token:preview.token,sessionId}));assert.equal(s.citations[0].snapshot.title,'Updated title');
+  const saved={...s.citations[0].snapshot};
+  title='Unreviewed title change';
+  assert.equal((await call('citations.refreshLabel',{...target(),id:s.citations[0].id,generation:status.generation,sessionId})).error.code,'VALIDATION');
+  unwrap(await call('preferences.update',{citationLabel:'formatted',citationStyle:'chicago-author-date'}));
+  s=unwrap(await call('citations.refreshLabel',{...target(),id:s.citations[0].id,generation:status.generation,sessionId}));
+  assert.deepEqual(s.citations[0].snapshot,{...saved,formattedCitation:s.citations[0].snapshot.formattedCitation});
+  assert.equal(s.citations[0].snapshot.formattedCitation.text,'(Research Group, 2026)');
+  assert.equal(s.citations[0].snapshot.formattedCitation.style,'chicago-author-date');
   unwrap(await call('zotero.cancel',{sessionId}));
   assert.equal((await call('citations.add',{...target(),generation:status.generation,sessionId,items:[identity]})).error.code,'CANCELLED');
   // Simulate a citation mutation queued behind a backup. Disconnect must send

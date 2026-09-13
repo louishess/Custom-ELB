@@ -23,7 +23,7 @@ const SECTION_IDS = ['information', 'method', 'notes', 'data'];
 const COLORS = new Set(['sage', 'blue', 'clay']);
 const STATUSES = new Set(['todo', 'progress', 'complete']);
 const ATTACHMENT_KINDS = new Set(['image', 'pdf', 'spreadsheet', 'scientific', 'file']);
-const PREFERENCE_KEYS = new Set(['appearance', 'palette', 'layout', 'directoryView', 'sort']);
+const PREFERENCE_KEYS = new Set(['appearance', 'palette', 'layout', 'directoryView', 'sort', 'citationLabel', 'citationStyle']);
 const LAYOUTS = new Set(['continuous', 'tabs']);
 const DIRECTORY_VIEWS = new Set(['grid', 'list']);
 const DEFAULT_PREFERENCES = Object.freeze({
@@ -32,6 +32,8 @@ const DEFAULT_PREFERENCES = Object.freeze({
   layout: 'continuous',
   directoryView: 'grid',
   sort: 'newest',
+  citationLabel: 'title',
+  citationStyle: '',
 });
 
 const EMPTY_DOCUMENT = Object.freeze({
@@ -297,6 +299,14 @@ function validatePreferencesChange(changes) {
     if (!DIRECTORY_VIEWS.has(changes.directoryView)) throw new StoreError('VALIDATION', 'directoryView must be grid or list.');
     result.directoryView = changes.directoryView;
   }
+  if (Object.prototype.hasOwnProperty.call(changes, 'citationLabel')) {
+    if (!['title','formatted'].includes(changes.citationLabel)) throw new StoreError('VALIDATION', 'Unknown citation label mode.');
+    result.citationLabel = changes.citationLabel;
+  }
+  if (Object.prototype.hasOwnProperty.call(changes, 'citationStyle')) {
+    if (changes.citationStyle !== '' && !citationData.styleSchema.safeParse(changes.citationStyle).success) throw new StoreError('VALIDATION', 'Unknown citation style.');
+    result.citationStyle = changes.citationStyle;
+  }
   if (Object.prototype.hasOwnProperty.call(changes, 'sort')) result.sort = requireText(changes.sort, 'sort');
   return result;
 }
@@ -438,6 +448,8 @@ const SCHEMA_SQL = [
     layout TEXT NOT NULL CHECK (layout IN ('continuous', 'tabs')),
     directory_view TEXT NOT NULL CHECK (directory_view IN ('grid', 'list')),
     sort TEXT NOT NULL,
+    citation_label TEXT NOT NULL DEFAULT 'title' CHECK (citation_label IN ('title','formatted')),
+    citation_style TEXT NOT NULL DEFAULT '',
     palette TEXT NOT NULL DEFAULT 'sage' CHECK (palette IN ('sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite', 'midnight'))
   )`,
 ];
@@ -534,6 +546,10 @@ class LibraryStore {
           database.exec('DROP TABLE preferences_before_v3');
           }
           database.exec(SCHEMA_SQL.find(sql => sql.includes('CREATE TABLE IF NOT EXISTS experiment_citations')));
+          if (version >= 3 && version < 5) {
+            database.exec("ALTER TABLE preferences ADD COLUMN citation_label TEXT NOT NULL DEFAULT 'title' CHECK (citation_label IN ('title','formatted'))");
+            database.exec("ALTER TABLE preferences ADD COLUMN citation_style TEXT NOT NULL DEFAULT ''");
+          }
           this._verifySchema(database);
           database.pragma(`user_version = ${SCHEMA_VERSION}`);
         })();
@@ -566,6 +582,10 @@ class LibraryStore {
     const preferences = database.prepare('SELECT COUNT(*) AS count FROM preferences WHERE id = 1').get();
     if (Number(preferences.count) !== 1) {
       throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
+    }
+    if (version >= 5) {
+      const labels = database.prepare('SELECT citation_label, citation_style FROM preferences WHERE id=1').get();
+      if (!labels || !['title','formatted'].includes(labels.citation_label) || (labels.citation_style !== '' && !citationData.styleSchema.safeParse(labels.citation_style).success)) throw new StoreError('CORRUPT_BACKUP', 'Library citation preferences are invalid.');
     }
     if (version >= 2) {
       const palette = database.prepare('SELECT palette FROM preferences WHERE id = 1').get().palette;
@@ -847,7 +867,7 @@ class LibraryStore {
       runIds: members.get(row.id) || [],
       revision: Number(row.revision),
     }));
-    const preferenceRow = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort FROM preferences WHERE id = 1').get();
+    const preferenceRow = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort, citation_label, citation_style FROM preferences WHERE id = 1').get();
     if (!preferenceRow) throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -870,6 +890,8 @@ class LibraryStore {
         layout: preferenceRow.layout,
         directoryView: preferenceRow.directory_view,
         sort: preferenceRow.sort,
+        citationLabel: preferenceRow.citation_label,
+        citationStyle: preferenceRow.citation_style,
       },
     };
   }
@@ -1105,7 +1127,7 @@ class LibraryStore {
     const changes = validatePreferencesChange(payload);
     const keys = Object.keys(changes);
     if (keys.length === 0) throw new StoreError('VALIDATION', 'Preference changes are empty.');
-    const current = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort FROM preferences WHERE id=1').get();
+    const current = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort, citation_label, citation_style FROM preferences WHERE id=1').get();
     if (!current) throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
     const next = {
       appearance: changes.appearance ?? Number(current.appearance),
@@ -1113,9 +1135,11 @@ class LibraryStore {
       layout: changes.layout ?? current.layout,
       directoryView: changes.directoryView ?? current.directory_view,
       sort: changes.sort ?? current.sort,
+      citationLabel: changes.citationLabel ?? current.citation_label,
+      citationStyle: changes.citationStyle ?? current.citation_style,
     };
-    this.db.prepare(`UPDATE preferences SET appearance=?, palette=?, layout=?, directory_view=?, sort=? WHERE id=1`).run(
-      next.appearance, next.palette, next.layout, next.directoryView, next.sort,
+    this.db.prepare(`UPDATE preferences SET appearance=?, palette=?, layout=?, directory_view=?, sort=?, citation_label=?, citation_style=? WHERE id=1`).run(
+      next.appearance, next.palette, next.layout, next.directoryView, next.sort, next.citationLabel, next.citationStyle,
     );
   }
 
