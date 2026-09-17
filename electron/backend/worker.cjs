@@ -318,10 +318,11 @@ function payloadShapeError(method, payload, internal = true) {
       return null;
     }
     case 'backups.run':
-      return hasExactKeys(payload, internal ? ['jobId', 'password', 'destination'] : ['jobId'], internal ? ['force'] : [])
+      return hasExactKeys(payload, internal ? ['jobId', 'password', 'destination'] : ['jobId'], internal ? ['force', 'deliveryTimeoutMs'] : [])
         && isJobId(payload.jobId)
         && (!internal || (isString(payload.password, { min: 1, max: 4096 })
-          && (payload.destination === null || (isString(payload.destination, { min: 1, max: 4096 }) && path.isAbsolute(payload.destination))) && (payload.force === undefined || typeof payload.force === 'boolean')))
+          && (payload.destination === null || (isString(payload.destination, { min: 1, max: 4096 }) && path.isAbsolute(payload.destination))) && (payload.force === undefined || typeof payload.force === 'boolean')
+          && (payload.deliveryTimeoutMs === undefined || (Number.isInteger(payload.deliveryTimeoutMs) && payload.deliveryTimeoutMs > 0 && payload.deliveryTimeoutMs <= 120000))))
         ? null : fail('Invalid backups.run payload');
     case 'backups.inspect':
       return payload === undefined ? null : fail('Backup inspection takes no payload');
@@ -526,6 +527,7 @@ function createWorkerRuntime(options = {}) {
       releaseQueue,
       beginCommit: () => { if (controller.signal.aborted) throw cancelledError(); controller.nonCancellable = true; },
       markCommitted: () => { controller.committed = true; controller.nonCancellable = true; },
+      markCheckpointCommitted: () => { controller.committed = true; controller.nonCancellable = false; },
       onProgress: event => {
         if (controller.signal.aborted && !controller.nonCancellable) throw cancelledError();
         if (!event || typeof event !== 'object') return;

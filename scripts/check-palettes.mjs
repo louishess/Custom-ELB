@@ -10,7 +10,7 @@ const root = await mkdtemp(path.join(os.tmpdir(), 'labmate-palettes-'));
 const output = path.resolve('artifacts/palettes');
 await mkdir(output, { recursive: true });
 const palettes = [['sage', 'Original Sage'], ['ocean', 'Ocean'], ['lavender', 'Lavender'], ['terracotta', 'Terracotta'], ['rose', 'Rose'], ['graphite', 'Graphite'], ['midnight', 'Midnight Purple']];
-const checks = [], errors = [], externalRequests = [], screenshots = [];
+const checks = [], errors = [], externalRequests = [], screenshots = [], brightnessInputs = [];
 let application, page;
 async function launch() {
   application = await electron.launch({
@@ -47,7 +47,14 @@ async function persisted(palette, appearance) {
     }
     await waitForRetry(50);
   }
-  assert.fail(`Timed out waiting for saved palette=${palette}, appearance=${appearance}; last preferences: ${JSON.stringify(lastPreferences)}`);
+  const displayed = await page.evaluate(() => ({
+    palette: document.documentElement.dataset.palette,
+    appearance: document.documentElement.dataset.appearance,
+    slider: document.querySelector('#appearance-range')?.value,
+    focused: document.hasFocus(),
+    activeElement: document.activeElement?.id,
+  }));
+  assert.fail(`Timed out waiting for saved palette=${palette}, appearance=${appearance}; last preferences: ${JSON.stringify(lastPreferences)}; displayed: ${JSON.stringify(displayed)}`);
 }
 async function openSettings() {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -57,11 +64,34 @@ async function closeSettings() {
   await page.keyboard.press('Escape');
   await page.getByRole('dialog').waitFor({ state: 'detached' });
 }
-async function brightness(value, palette) {
+async function focusWindow() {
+  // Native desktop checks must run serially: a second app can take keyboard
+  // focus even though the locator remains the document's active element.
+  await application.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    window.focus();
+    window.webContents.focus();
+  });
+  await page.waitForFunction(() => document.hasFocus());
+}
+async function setBrightness(value) {
+  await focusWindow();
   const slider = page.getByRole('slider', { name: 'Appearance', exact: true });
   await slider.focus();
   await slider.press(value === 100 ? 'End' : 'Home');
   if (value === 50) for (let i = 0; i < 5; i++) await slider.press('PageUp');
+  const input = await slider.evaluate(element => ({
+    value: Number(element.value),
+    displayed: Number(document.documentElement.dataset.appearance),
+    focused: document.hasFocus(),
+    active: document.activeElement === element,
+  }));
+  brightnessInputs.push({ requested: value, ...input });
+  assert.equal(input.value, value, `Brightness keyboard input did not reach the slider: ${JSON.stringify(input)}`);
+  assert.equal(input.displayed, value, 'The workspace should immediately display the requested brightness.');
+}
+async function brightness(value, palette) {
+  await setBrightness(value);
   await persisted(palette, value);
 }
 async function shot(name) {
@@ -124,8 +154,66 @@ try {
       await shot(`${id}-100-directory`);
     });
   }
+  await check('An in-flight brightness save preserves newer input and flushes it before a palette change', async () => {
+    await openSettings();
+    // Hold one actual desktop response after persistence. The next slider edit
+    // must remain visible while that older response returns, then save last.
+    await application.evaluate(({ app }) => {
+      const load = process.getBuiltinModule('module').createRequire(app.getAppPath() + '/package.json');
+      const client = load('./electron/main.cjs').runtime.worker;
+      const request = client.request;
+      const probe = { values: [], held: false, release: null, restore: () => { client.request = request; } };
+      client.__paletteSaveProbe = probe;
+      client.request = async function(method, payload, ...rest) {
+        const result = await request.call(this, method, payload, ...rest);
+        if (method === 'preferences.update' && typeof payload?.appearance === 'number') {
+          probe.values.push(payload.appearance);
+          if (probe.values.length === 1) {
+            probe.held = true;
+            await new Promise(resolve => { probe.release = resolve; });
+          }
+        }
+        return result;
+      };
+    });
+    try {
+      await setBrightness(0);
+      const deadline = Date.now() + 15_000;
+      let held = false;
+      while (Date.now() < deadline && !held) {
+        held = await application.evaluate(({ app }) => {
+          const load = process.getBuiltinModule('module').createRequire(app.getAppPath() + '/package.json');
+          return load('./electron/main.cjs').runtime.worker.__paletteSaveProbe.held;
+        });
+        if (!held) await waitForRetry(25);
+      }
+      assert.equal(held, true, 'The first brightness response must be held before entering the next value.');
+      await setBrightness(50);
+      await page.locator('.palette-option').filter({ hasText: 'Graphite' }).click();
+      await application.evaluate(({ app }) => {
+        const load = process.getBuiltinModule('module').createRequire(app.getAppPath() + '/package.json');
+        load('./electron/main.cjs').runtime.worker.__paletteSaveProbe.release();
+      });
+      await persisted('graphite', 50);
+      const values = await application.evaluate(({ app }) => {
+        const load = process.getBuiltinModule('module').createRequire(app.getAppPath() + '/package.json');
+        return load('./electron/main.cjs').runtime.worker.__paletteSaveProbe.values;
+      });
+      assert.deepEqual(values, [0, 50], 'Only the initial and latest brightness should be written.');
+    } finally {
+      await application.evaluate(({ app }) => {
+        const load = process.getBuiltinModule('module').createRequire(app.getAppPath() + '/package.json');
+        const client = load('./electron/main.cjs').runtime.worker;
+        client.__paletteSaveProbe.release?.();
+        client.__paletteSaveProbe.restore();
+        delete client.__paletteSaveProbe;
+      });
+    }
+    await closeSettings();
+  });
   await check('Palette radio controls expose visible keyboard focus and arrow navigation', async () => {
     await openSettings();
+    await focusWindow();
     await page.getByRole('radio', { name: 'Graphite', exact: true }).focus();
     await page.keyboard.press('ArrowLeft');
     await persisted('rose');
@@ -167,12 +255,12 @@ try {
     assert.deepEqual(errors, []);
     assert.deepEqual(externalRequests, []);
   });
-  await writeFile(path.join(output, 'checks.json'), JSON.stringify({ checkedAt: new Date().toISOString(), packaged: Boolean(process.env.LABMATE_APP_BINARY), checks, errors, externalRequests, screenshots }, null, 2));
+  await writeFile(path.join(output, 'checks.json'), JSON.stringify({ checkedAt: new Date().toISOString(), packaged: Boolean(process.env.LABMATE_APP_BINARY), checks, errors, externalRequests, screenshots, brightnessInputs }, null, 2));
   await Promise.all(['failure.json', 'failure.png'].map(name => rm(path.join(output, name), { force: true })));
   console.log(`Verified ${checks.length} palette UI checks; ${screenshots.length} screenshots saved to ${output}.`);
 } catch (error) {
   if (page && !page.isClosed()) await shot('failure').catch(() => {});
-  await writeFile(path.join(output, 'failure.json'), JSON.stringify({ error: String(error), checks, errors, externalRequests }, null, 2));
+  await writeFile(path.join(output, 'failure.json'), JSON.stringify({ error: String(error), checks, errors, externalRequests, brightnessInputs }, null, 2));
   throw error;
 } finally {
   if (application) await application.close().catch(() => {});

@@ -47,6 +47,7 @@ packageTest('packaged app contains backend processes, local PDF worker, and unpa
     'electron/backend/backup.cjs',
     'electron/backend/backup-worker.cjs',
     'electron/backend/backup-manager.cjs',
+    'electron/backend/cloud-worker.cjs',
     'electron/backend/files.cjs',
     'electron/backend/parser.cjs',
     'electron/backend/exports.cjs',
@@ -55,6 +56,7 @@ packageTest('packaged app contains backend processes, local PDF worker, and unpa
   }
 
   const files = listPackage(asarPath, { isPack: false });
+  assert.ok(fs.existsSync(path.join(resourcesRoot, 'app.asar.unpacked', 'electron', 'backend', 'cloud-worker.cjs')), 'Box delivery process was not unpacked');
   assert.ok(
     files.some(file => /^\/dist\/assets\/pdf\.worker\.min-[^/]+\.mjs$/.test(file)),
     'Vite did not package the local PDF worker',
@@ -80,4 +82,22 @@ packageTest('packaged Electron verifies SQLite and encrypted library backup/rest
   });
   assert.equal(result.signal, null, `packaged database check timed out: ${result.stderr}`);
   assert.equal(result.status, 0, `packaged database check failed:\n${result.stdout}\n${result.stderr}`);
+});
+
+packageTest('packaged provider child delivers and stages verified archives through the unpacked entry point', t => {
+  const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'labmate-packaged-provider-'));
+  t.after(() => fs.rmSync(workRoot, { recursive: true, force: true }));
+  const helper = path.join(__dirname, 'helpers', 'packaged-provider-smoke.cjs');
+  const result = spawnSync(binaryPath, [helper, asarPath, workRoot], {
+    encoding: 'utf8',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LABMATE_LIBRARY_ROOT: path.join(workRoot, 'library'), LABMATE_TEST_PROFILE: path.join(workRoot, 'profile') },
+    timeout: 30_000,
+  });
+  assert.equal(result.signal, null, `packaged provider check timed out: ${result.stderr}`);
+  assert.equal(result.status, 0, `packaged provider check failed:\n${result.stdout}\n${result.stderr}`);
+  const evidence = JSON.parse(result.stdout.trim());
+  assert.equal(evidence.delivered, true);
+  assert.equal(evidence.staged, true);
+  assert.equal(evidence.cleaned, true);
+  assert.equal(evidence.childCount, 2);
 });

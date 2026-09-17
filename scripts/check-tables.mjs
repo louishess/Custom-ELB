@@ -19,7 +19,7 @@ try {
   const page = await application.firstWindow();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.waitForFunction(() => Boolean(window.labmate));
+  await page.getByRole('heading', { name: 'Lab notebooks', exact: true }).waitFor();
   const api = async (method, input) => {
     const result = await page.evaluate(async ({ method, input }) => {
       const [group, name] = method.split('.');

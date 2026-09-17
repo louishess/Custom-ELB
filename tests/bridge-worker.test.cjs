@@ -215,7 +215,7 @@ test('scheduled backup captures when no cataloged local checkpoint exists', asyn
   assert.equal(dueCalls.filter(c=>c.method==='backups.run').length, 1);
   assert.equal(dueCalls[0].method, 'backups.run');
   assert.equal(typeof dueCalls[0].payload.password, 'string');
-  assert.equal(dueCalls[0].payload.destination, null);
+  assert.equal(dueCalls[0].payload.destination, dueRuntime.configStore.readRaw().value.destination);
   fs.rmSync(dueRoot, { recursive: true, force: true });
 
   const currentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'labmate-daily-current-'));

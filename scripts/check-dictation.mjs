@@ -18,7 +18,7 @@ try {
   });
   page = await app.firstWindow();
   page.on('pageerror', error => errors.push(error.message));
-  await page.waitForFunction(() => Boolean(window.labmate));
+  await page.getByRole('heading', { name: 'Lab notebooks', exact: true }).waitFor();
   await app.evaluate(async ({ app, BrowserWindow }) => {
     const { runtime } = process.mainModule.require(`${app.getAppPath()}/electron/main.cjs`);
     const emit = event => BrowserWindow.getAllWindows()[0].webContents.send('labmate:dictation', event);

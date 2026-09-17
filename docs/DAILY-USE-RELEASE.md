@@ -20,11 +20,17 @@ resource failures can make protection overdue; the interface reports this
 rather than advancing the captured revision or time prematurely.
 
 The database capture is exclusive and short. Private hard links pin immutable
-objects. Compression, encryption, verification, and delivery run in a separate
-worker thread. Ordinary saves resume after capture. Restore stays exclusive.
+objects. Compression, encryption, and verification run in a separate worker
+thread. Box access runs in a disposable child process with its own filesystem
+queue and a bounded timeout, after the local checkpoint is durable. Ordinary
+saves resume after capture. Restore stays exclusive. Selected incoming archives
+are first copied into private local staging; an unavailable provider can be
+cancelled without occupying the library worker.
 The encrypted local checkpoint is verified before it is cataloged; a missing
 Box folder leaves a persistent pending delivery. Existing backup passwords stay
-protected by macOS secure storage with no plaintext fallback.
+protected by macOS secure storage with no plaintext fallback. Quit waits for
+local capture and verification, then allows pending Box delivery to be deferred
+explicitly. Repeated quit requests cannot bypass this boundary.
 
 Rotation keeps the union of 16 recent, 30 daily, and 12 weekly archives, plus the
 last successfully rehearsed archive. Overlapping selections count once. Pending
@@ -76,8 +82,8 @@ They do not contact the user's Box account.
 Candidate measurements: 5,000 runs, approximately 47.8 MB initial snapshot;
 preference update 481 bytes and about 0.6 ms store work. During a packaged backup,
 39 saves had about 2 ms median, 102 ms 95th percentile, and 122 ms maximum latency.
-A 2,131,361,990-byte encrypted archive recovered 2,032 MiB of attachments. That
-capacity backup and recovery exercise took about 17 minutes combined. These are
+A 2,131,361,983-byte encrypted archive recovered 2,032 MiB of attachments. The
+latest candidate capacity backup and recovery exercise took about 99 seconds. These are
 measurements on this Mac, not timing guarantees.
 
 ## Package identity and final gates
@@ -95,9 +101,13 @@ and keep automated/backend, packaged/native, and real-account acceptance separat
 The prior 0.5.1 package is preserved there. Preserve a verified consistent copy of
 the working library before installation or migration.
 
-Remaining live gates: configure the chosen password and dedicated real Box
-folder; create a checkpoint; freshly download that archive from Box online; test
-and restore it in a disposable profile using the password; pin that rehearsal;
+The working schema-5 library was copied and verified before migration. The user
+configured secure storage and a dedicated UCLA Box folder. The first encrypted
+checkpoint was verified locally, observed online, and freshly downloaded with an
+identical SHA-256 hash. Evidence is in `artifacts/release/box-online/`.
+
+Remaining live gates: test and restore the downloaded archive in a disposable
+profile using the password; pin that rehearsal;
 verify credentials after installation/restart; dictate a real utterance and repeat
 offline; inspect Glass on the actual desktop and with macOS accessibility settings.
 Do not infer these outcomes from fixture tests.

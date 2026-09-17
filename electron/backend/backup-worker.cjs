@@ -5,7 +5,7 @@ const fsp = fs.promises;
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { createBackupService, copyFileAtomic } = require('./backup.cjs');
-const { digest, readCatalog, writeCatalog, retainedArchives, catalogStatus } = require('./backup-catalog.cjs');
+const { digest, readCatalog, writeCatalog, catalogStatus } = require('./backup-catalog.cjs');
 const controller = new AbortController();
 parentPort.on('message', message => { if (message.cancel) controller.abort(); });
 const { root, request, captured } = workerData;
@@ -19,61 +19,6 @@ const copyJob = {
   progress(phase, message, completed, total) { job.onProgress({ jobId: request.jobId, operation: 'backups.run', phase, message, completed, total }); },
 };
 async function sameHash(file, hash) { try { return await digest(file) === hash; } catch { return false; } }
-
-async function deliverAndRotate(catalog) {
-  const keep = retainedArchives(catalog, request.destination);
-  let deliveryFailure;
-  const destination = request.destination;
-  if (destination) {
-    try {
-      const stat = await fsp.lstat(destination);
-      if (!stat.isDirectory() || stat.isSymbolicLink() || await fsp.realpath(destination) !== destination) throw new Error('The Box backup folder is unavailable.');
-      for (const archive of [...catalog.archives].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))) {
-        if (!keep.has(archive.name)) continue;
-        const previousCopy = archive.copies.find(c => c.directory === destination);
-        const target = path.join(destination, previousCopy?.name || archive.name);
-        let unchangedCopy = false;
-        if (previousCopy?.size !== undefined) { try { const stat = await fsp.lstat(target); unchangedCopy = stat.isFile() && !stat.isSymbolicLink() && stat.size === previousCopy.size && stat.mtimeMs === previousCopy.mtimeMs; } catch {} }
-        if (unchangedCopy || await sameHash(target, archive.sha256)) {
-          if (!previousCopy) archive.copies.push({ directory: destination, name: path.basename(target), verifiedAt: new Date().toISOString() });
-          continue;
-        }
-        const source = path.join(root, 'backups', archive.name);
-        if (!await sameHash(source, archive.sha256)) throw new Error('A local checkpoint failed verification. Existing recovery copies were retained.');
-        // Never overwrite an unexpected or changed file at the destination.
-        let output = target;
-        try { await fsp.lstat(output); output = path.join(destination, `labmate-${crypto.randomUUID()}.labmatebackup`); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-        await copyFileAtomic(source, output, { maxBackupBytes: 2 * 1024 ** 3 }, copyJob);
-        archive.copies = archive.copies.filter(c => c.directory !== destination);
-        const verifiedStat = await fsp.lstat(output);
-        archive.copies.push({ directory: destination, name: path.basename(output), verifiedAt: new Date().toISOString(), size: verifiedStat.size, mtimeMs: verifiedStat.mtimeMs });
-        await writeCatalog(root, catalog);
-      }
-    } catch (error) { deliveryFailure = { at: new Date().toISOString(), message: `Local checkpoint retained; Box delivery pending. ${error.message}` }; }
-  } else deliveryFailure = {at: new Date().toISOString(), message: 'The Box folder is unavailable. Your local checkpoint is retained; delivery will retry automatically.'};
-  catalog.lastFailure = deliveryFailure || null;
-  await writeCatalog(root, catalog);
-  // A failure never causes automatic deletion. Hash/ownership checks apply to
-  // every removal; foreign files and changed archives remain untouched.
-  if (!deliveryFailure && catalog.archives.length > 1) {
-    const retainedAfterDelivery = retainedArchives(catalog, destination);
-    for (const archive of [...catalog.archives]) {
-      if (retainedAfterDelivery.has(archive.name)) continue;
-      let removed = true;
-      for (const copy of archive.copies.filter(c => c.directory === destination)) {
-        const file = path.join(copy.directory, copy.name);
-        if (await sameHash(file, archive.sha256)) await fsp.unlink(file).catch(() => { removed = false; });
-        else removed = false;
-      }
-      const local = path.join(root, 'backups', archive.name);
-      if (removed && await sameHash(local, archive.sha256)) await fsp.unlink(local).catch(() => { removed = false; });
-      else removed = false;
-      if (removed) catalog.archives = catalog.archives.filter(a => a.name !== archive.name);
-    }
-    await writeCatalog(root, catalog);
-  }
-  return catalogStatus(catalog, destination);
-}
 
 async function backup() {
   const catalog = readCatalog(root);
@@ -91,8 +36,7 @@ async function backup() {
     await writeCatalog(root, catalog);
     job.markCommitted();
   }
-  const status = await deliverAndRotate(catalog);
-  return { ...status, createdAt: status.lastLocalBackupAt, message: status.pendingDeliveryCount ? 'Local checkpoint verified. Box delivery is pending.' : 'Local checkpoint and Box Drive copy verified; upload is managed by Box.' };
+  return catalogStatus(catalog, request.destination);
 }
 
 async function verify() {

@@ -44,6 +44,7 @@ const { createDictationService, validateSession } = require('./dictation.cjs');
 const { calculateMarkedYield, validateManualMaterial } = require('../shared/material-yield.cjs');
 const citationData = require('../shared/citations.cjs');
 const { createZoteroService } = require('./zotero.cjs');
+const { probeCloudDestination, stageCloudBackup } = require('./backend/cloud-process.cjs');
 
 const INVOKE_CHANNEL = 'labmate:invoke';
 const PROGRESS_CHANNEL = 'labmate:progress';
@@ -531,10 +532,7 @@ class LocalConfigStore {
     if (!raw.value) return { ok: true, value: null };
     const decrypted = this.decrypt(raw.value);
     if (!decrypted.ok) return decrypted;
-    const folder = validateExistingDirectory(decrypted.value.destination, this.fsApi, { writable: true });
-    const roots = detectBoxDrivePaths(safeHomePath(this.appApi, this.env), this.fsApi);
-    const available = folder.ok && roots.some(root => isWithinDirectory(realpath(this.fsApi, root), folder.value));
-    return { ok: true, value: { ...decrypted.value, destination: folder.ok ? folder.value : decrypted.value.destination, destinationAvailable: available } };
+    return decrypted;
   }
 
   readStatus() {
@@ -542,8 +540,7 @@ class LocalConfigStore {
     if (!raw.ok || !raw.value) return raw;
     const decrypted = this.decrypt(raw.value);
     if (!decrypted.ok) return decrypted;
-    const usable = this.readUsable();
-    return usable.ok ? {ok: true, value: {...raw.value, destinationAvailable: usable.value?.destinationAvailable}} : usable;
+    return { ok: true, value: raw.value };
   }
 
   changeDestination(destination) {
@@ -551,11 +548,10 @@ class LocalConfigStore {
     if (!raw.ok || !raw.value) return raw.ok ? unavailableResult('Set up a backup password first') : raw;
     const decrypted = this.decrypt(raw.value);
     if (!decrypted.ok) return decrypted;
-    const folder = validateExistingDirectory(destination, this.fsApi, { writable: true });
-    if (!folder.ok) return resultError('VALIDATION', folder.error);
-    const same = folder.value === raw.value.destination;
+    if (!noNulAbsolute(destination)) return resultError('VALIDATION', 'Invalid backup destination');
+    const same = destination === raw.value.destination;
     try {
-      const config = { ...raw.value, destination: folder.value, lastBackupAt: same ? raw.value.lastBackupAt : null,
+      const config = { ...raw.value, destination, lastBackupAt: same ? raw.value.lastBackupAt : null,
         lastAttemptAt: same ? raw.value.lastAttemptAt : null, lastFailure: same ? raw.value.lastFailure : null };
       atomicWriteJSON(this.fsApi, this.filePath, config);
       return { ok: true, value: config };
@@ -575,9 +571,9 @@ class LocalConfigStore {
   configure(destination, password) {
     if (!this.isEncryptionAvailable()) return unavailableResult('Secure Keychain storage is unavailable; retry backup setup');
     if (typeof password !== 'string' || password.length === 0) return resultError('VALIDATION', 'Backup password is required');
-    const folder = validateExistingDirectory(destination, this.fsApi, { writable: true });
-    if (!folder.ok) return resultError('VALIDATION', folder.error);
-    const canonicalDestination = folder.value;
+    // The native picker path is validated in the isolated provider process.
+    if (!noNulAbsolute(destination)) return resultError('VALIDATION', 'Invalid backup destination');
+    const canonicalDestination = destination;
     const raw = this.readRaw();
     const previous = raw.ok && raw.value ? raw.value : null;
     try {
@@ -770,6 +766,9 @@ function createBridgeRuntime({
   workerPath = path.join(__dirname, 'backend', 'worker.cjs'),
   closeTimeoutMs = DEFAULT_CLOSE_TIMEOUT_MS,
   workerCloseTimeoutMs = DEFAULT_WORKER_CLOSE_TIMEOUT_MS,
+  closeDeliveryTimeoutMs = 3_000,
+  destinationProbe = probeCloudDestination,
+  incomingStage = stageCloudBackup,
   dictationFactory = createDictationService,
   zoteroFactory = createZoteroService,
   } = {}) {
@@ -788,6 +787,11 @@ function createBridgeRuntime({
   let backupMessage = '';
   let backupProgress = null;
   let shuttingDown = false;
+  let quitApproved = false;
+  const closingWindows = new WeakSet();
+  let backupDeliveryReady = false;
+  let deferDeliveryJobId = null;
+  let destinationProbeInFlight = null;
   let allowWindowClose = false;
   let restoringLibrary = false;
   const citationJobs = new Map();
@@ -895,6 +899,10 @@ function createBridgeRuntime({
 
   const forwardProgress = event => {
     if (activeJobs.get(event.jobId)?.method?.startsWith('backups.')) backupProgress = event;
+    if (activeJobs.get(event.jobId)?.method === 'backups.run' && event.phase === 'delivery') {
+      backupDeliveryReady = true;
+      if (deferDeliveryJobId === event.jobId) void runtime.worker.request('jobs.cancel', { jobId: event.jobId });
+    }
     const targetId = jobWindows.get(event.jobId);
     let targets = [];
     if (targetId !== undefined && BrowserWindowApi && typeof BrowserWindowApi.fromId === 'function') {
@@ -954,7 +962,7 @@ function createBridgeRuntime({
     return response === true;
   }
 
-  async function runBackup(jobId, window, automatic = false) {
+  async function runBackup(jobId, window, automatic = false, options = {}) {
     if (backupInFlight) return unavailableResult('A backup or restore is already running');
     const attemptedAt = new Date().toISOString();
     const config = configStore.readUsable();
@@ -971,6 +979,7 @@ function createBridgeRuntime({
     backupRunning = true;
     backupMessage = automatic ? 'Running scheduled backup' : 'Creating encrypted backup';
     backupProgress = null;
+    backupDeliveryReady = false;
     const attempted = configStore.recordAttempt(attemptedAt);
     if (!attempted.ok) { backupRunning = false; releaseJob(effectiveJobId); return attempted; }
     const operation = (async () => {
@@ -980,8 +989,9 @@ function createBridgeRuntime({
         const result = await runtime.worker.request('backups.run', {
           jobId: effectiveJobId,
           password: config.value.password,
-          destination: config.value.destinationAvailable === false ? null : config.value.destination,
+          destination: config.value.destination,
           force: !automatic,
+          ...(options.deliveryTimeoutMs ? { deliveryTimeoutMs: options.deliveryTimeoutMs } : {}),
         });
         if (!result.ok) {
           backupMessage = result.error.message;
@@ -1009,6 +1019,7 @@ function createBridgeRuntime({
       } finally {
         backupRunning = false;
         backupProgress = null;
+        backupDeliveryReady = false;
         releaseJob(effectiveJobId);
         backupInFlight = null;
       }
@@ -1023,11 +1034,14 @@ function createBridgeRuntime({
     if (!reserved.ok) return reserved;
     const jobId = reserved.value;
     activeJobs.get(jobId).method = verify ? 'backups.verify' : 'backups.restore';
+    const controller = new AbortController();
+    activeJobs.get(jobId).nativeController = controller;
     backupRunning = true;
     restoringLibrary = true;
     zotero.invalidate();
     for (const id of citationOwners.keys()) void cancelCitations(id);
     const operation = (async () => {
+      let staged;
       try {
         // Flush before opening the native picker so the restore invariant is
         // owned by main even when a renderer calls this method directly.
@@ -1038,10 +1052,14 @@ function createBridgeRuntime({
           filters: [{ name: 'LabMate backup', extensions: ['labmatebackup', 'labmate', 'backup', 'zip'] }],
         });
         if (!selected || selected.canceled || !Array.isArray(selected.filePaths) || selected.filePaths.length !== 1) return dialogResultCancelled();
-        const source = validateExistingFile(selected.filePaths[0], fsApi);
-        if (!source.ok) return resultError('VALIDATION', source.error);
+        staged = await incomingStage(selected.filePaths[0], { signal: controller.signal,
+          onProgress: event => forwardProgress({ ...event, jobId, operation: verify ? 'backups.verify' : 'backups.restore', state: 'running', cancellable: true }) });
+        if (controller.signal.aborted) return cancelledResult('Backup preparation cancelled');
 
-        if (verify) return await runtime.worker.request('backups.verify', {password: payload.password, source: source.value, jobId});
+        if (verify) {
+          delete activeJobs.get(jobId).nativeController;
+          return await runtime.worker.request('backups.verify', {password: payload.password, source: staged.source, jobId});
+        }
         const confirmation = await dialogApi.showMessageBox(window, {
           type: 'warning',
           title: 'Restore LabMate backup?',
@@ -1053,8 +1071,13 @@ function createBridgeRuntime({
           noLink: true,
         });
         if (!confirmation || confirmation.response !== 1) return dialogResultCancelled();
-        return await runtime.worker.request('backups.restore', { password: payload.password, source: source.value, jobId });
+        if (controller.signal.aborted) return cancelledResult('Backup preparation cancelled');
+        delete activeJobs.get(jobId).nativeController;
+        return await runtime.worker.request('backups.restore', { password: payload.password, source: staged.source, jobId });
+      } catch (error) {
+        return resultError(ERROR_CODES.has(error.code) ? error.code : 'IO', error.message || 'The backup file could not be prepared.');
       } finally {
+        await staged?.cleanup();
         backupRunning = false;
         restoringLibrary = false;
         zotero.invalidate();
@@ -1137,7 +1160,8 @@ function createBridgeRuntime({
   }
 
   async function chooseBackupDestination(window) {
-    const defaults = detectBoxDrivePaths(safeHomePath(appApi, env), fsApi);
+    const home = safeHomePath(appApi, env);
+    const defaults = (await destinationProbe(home)).roots;
     if (!defaults.length) return unavailableResult('Box Drive was not found. Install or open Box Drive, then retry setup.');
     const selected = await dialogApi.showOpenDialog(window, {
       title: 'Choose a Box Drive backup folder', defaultPath: defaults[0],
@@ -1145,13 +1169,9 @@ function createBridgeRuntime({
       message: 'Choose a folder inside Box Drive for completed encrypted archives.',
     });
     if (!selected || selected.canceled || !Array.isArray(selected.filePaths) || selected.filePaths.length !== 1) return dialogResultCancelled();
-    const destination = validateExistingDirectory(selected.filePaths[0], fsApi, { writable: true });
-    if (!destination.ok) return resultError('VALIDATION', destination.error);
-    const insideBox = defaults.some(folder => {
-      try { return isWithinDirectory(realpath(fsApi, folder), destination.value); } catch { return false; }
-    });
-    if (!insideBox) return resultError('VALIDATION', 'Choose a folder inside the detected Box Drive directory');
-    return destination;
+    const destination = await destinationProbe(home, selected.filePaths[0]);
+    if (!destination.available) return resultError('VALIDATION', destination.message || 'Choose an available folder inside Box Drive.');
+    return { ok: true, value: destination.destination };
   }
 
   async function configureBackups(payload, window, changeOnly = false) {
@@ -1167,17 +1187,17 @@ function createBridgeRuntime({
     if (!verified.ok) return verified;
     if (!verified.value) return unavailableResult('Backup configuration could not be verified; retry setup');
     backupMessage = 'Destination ready. Create a first backup to verify your copy.';
-    return { ok: true, value: makeBackupStatus(verified, false, backupMessage) };
+    return { ok: true, value: makeBackupStatus({ok: true, value: {...verified.value, destinationAvailable: true}}, false, backupMessage) };
   }
 
   async function revealBackupDestination() {
     const config = configStore.readRaw();
     if (!config.ok) return config;
     if (!config.value) return unavailableResult('Backup is not configured');
-    const folder = validateExistingDirectory(config.value.destination, fsApi);
-    if (!folder.ok) return unavailableResult('Backup destination is unavailable');
+    const folder = await destinationProbe(safeHomePath(appApi, env), config.value.destination);
+    if (!folder.available) return unavailableResult('Backup destination is unavailable');
     if (!shellApi || typeof shellApi.openPath !== 'function') return unavailableResult('Finder is unavailable');
-    const error = await shellApi.openPath(folder.value);
+    const error = await shellApi.openPath(folder.destination);
     return error ? resultError('IO', 'Backup destination could not be opened') : { ok: true, value: { opened: true } };
   }
 
@@ -1195,8 +1215,19 @@ function createBridgeRuntime({
     }
     const inspected = protectionInspection;
     const protectedRevision = !!inspected?.ok && inspected.value?.localAvailable && !!health.capturedRevision && health.capturedRevision === inspected.value?.currentToken;
-    return { ok: true, value: { ...makeBackupStatus(configStore.readStatus(), backupRunning, backupMessage || undefined),
-      ...health, lastFailure: health.lastFailure || makeBackupStatus(configStore.readStatus(), backupRunning).lastFailure, protectedRevision,
+    const config = configStore.readStatus();
+    if (config.ok && config.value) {
+      const destination = config.value.destination;
+      if (destinationProbeInFlight?.destination !== destination) {
+        const entry = { destination };
+        entry.promise = destinationProbe(safeHomePath(appApi, env), destination).finally(() => { if (destinationProbeInFlight === entry) destinationProbeInFlight = null; });
+        destinationProbeInFlight = entry;
+      }
+      const probe = await destinationProbeInFlight.promise;
+      config.value = {...config.value, destinationAvailable: probe.available};
+    }
+    return { ok: true, value: { ...makeBackupStatus(config, backupRunning, backupMessage || undefined),
+      ...health, lastFailure: health.lastFailure || makeBackupStatus(config, backupRunning).lastFailure, protectedRevision,
       overdue: !protectedRevision && (!health.lastLocalBackupAt || Date.now() - Date.parse(health.lastLocalBackupAt) > BACKUP_DEADLINE_MS),
       capacity: inspected?.ok ? inspected.value?.capacity : undefined,
       ...(backupRunning && backupProgress ? { progress: backupProgress } : {}) } };
@@ -1244,6 +1275,10 @@ function createBridgeRuntime({
           } catch { return resultError('IO', 'Attachment could not be opened'); }
         }
         case 'jobs.cancel':
+          if (activeJobs.get(payload.jobId)?.nativeController) {
+            activeJobs.get(payload.jobId).nativeController.abort();
+            return { ok: true, value: { cancelled: true } };
+          }
           return runtime.worker.request('jobs.cancel', payload);
         default: {
           const result = await runtime.worker.request(method, payload, libraryGeneration);
@@ -1270,10 +1305,16 @@ function createBridgeRuntime({
   }
 
   async function checkpointBeforeClose(window) {
-    if (backupInFlight) await backupInFlight;
+    if (backupInFlight) {
+      for (const job of activeJobs.values()) job.nativeController?.abort();
+      const active = [...activeJobs].find(([, value]) => value.method === 'backups.run');
+      deferDeliveryJobId = active?.[0] || null;
+      if (deferDeliveryJobId && backupDeliveryReady) void runtime.worker.request('jobs.cancel', { jobId: deferDeliveryJobId });
+      try { await backupInFlight; } finally { deferDeliveryJobId = null; }
+    }
     const config = configStore.readRaw();
     if (!config.ok || !config.value) return true;
-    const result = await runBackup(randomJobId(), window, true);
+    const result = await runBackup(randomJobId(), window, true, { deliveryTimeoutMs: closeDeliveryTimeoutMs });
     const health = backupHealth();
     if (result.ok && !health.pendingDeliveryCount) return true;
     const response = await dialogApi.showMessageBox(window, {
@@ -1286,46 +1327,54 @@ function createBridgeRuntime({
   }
 
   async function closeWindow(event, window) {
-    if (shuttingDown || (window && allowedCloseWindows.has(window))) return;
+    if (quitApproved || (window && allowedCloseWindows.has(window))) return;
     event.preventDefault();
-    const flushed = await requestRendererFlush(window);
-    if (!flushed || !(await checkpointBeforeClose(window))) return;
-    runtime.cancelWindowDictation(window?.webContents);
-    runtime.cancelWindowCitations(window?.webContents);
-    if (window && typeof window === 'object') allowedCloseWindows.add(window);
-    allowWindowClose = true;
-    if (BrowserWindowApi && typeof BrowserWindowApi.getAllWindows === 'function') {
-      let count = 1;
-      try { count = BrowserWindowApi.getAllWindows().length; } catch { /* safe default */ }
-      if (count <= 1) await runtime.worker.close(workerCloseTimeoutMs);
-    }
-    try { window.close(); } catch { /* native close event may already be completing */ }
+    if (shuttingDown || closingWindows.has(window)) return;
+    closingWindows.add(window);
+    try {
+      const flushed = await requestRendererFlush(window);
+      if (!flushed || !(await checkpointBeforeClose(window))) return;
+      runtime.cancelWindowDictation(window?.webContents);
+      runtime.cancelWindowCitations(window?.webContents);
+      if (BrowserWindowApi && typeof BrowserWindowApi.getAllWindows === 'function') {
+        let count = 1;
+        try { count = BrowserWindowApi.getAllWindows().length; } catch { /* safe default */ }
+        if (count <= 1 && !(await runtime.worker.close(workerCloseTimeoutMs)).ok) return;
+      }
+      if (window && typeof window === 'object') allowedCloseWindows.add(window);
+      allowWindowClose = true;
+      try { window.close(); } catch { /* native close event may already be completing */ }
+    } finally { closingWindows.delete(window); }
   }
 
   async function closeApplication(event) {
-    if (shuttingDown) return;
+    if (quitApproved) return;
     if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    if (shuttingDown) return false;
     shuttingDown = true;
-    let flushed = true;
-    let windows = [];
-    if (BrowserWindowApi && typeof BrowserWindowApi.getAllWindows === 'function') {
-      try { windows = BrowserWindowApi.getAllWindows(); } catch { windows = []; }
-    }
-    for (const window of windows) {
-      if (!(await requestRendererFlush(window))) flushed = false;
-    }
-    if (!flushed) {
-      shuttingDown = false;
-      return false;
-    }
-    if (!(await checkpointBeforeClose(windows[0]))) { shuttingDown = false; return false; }
-    stopDailyBackup();
-    allowWindowClose = true;
-    speech.dispose(); speechOwners.clear();
-    zotero.dispose();
-    await runtime.worker.close(workerCloseTimeoutMs);
-    if (appApi && typeof appApi.quit === 'function') appApi.quit();
-    return true;
+    try {
+      let flushed = true;
+      let windows = [];
+      if (BrowserWindowApi && typeof BrowserWindowApi.getAllWindows === 'function') {
+        try { windows = BrowserWindowApi.getAllWindows(); } catch { windows = []; }
+      }
+      for (const window of windows) {
+        if (!(await requestRendererFlush(window))) flushed = false;
+      }
+      if (!flushed) {
+        shuttingDown = false;
+        return false;
+      }
+      if (!(await checkpointBeforeClose(windows[0]))) { shuttingDown = false; return false; }
+      if (!(await runtime.worker.close(workerCloseTimeoutMs)).ok) return false;
+      stopDailyBackup();
+      allowWindowClose = true;
+      speech.dispose(); speechOwners.clear();
+      zotero.dispose();
+      quitApproved = true;
+      if (appApi && typeof appApi.quit === 'function') appApi.quit();
+      return true;
+    } finally { if (!quitApproved) shuttingDown = false; }
   }
 
   function startDailyBackup() {

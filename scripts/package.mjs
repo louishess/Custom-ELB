@@ -41,7 +41,7 @@ const paths = await packager({
   overwrite: true,
   // Native bindings must stay outside the archive so macOS can load and sign
   // them. Renderer assets (including the local PDF worker) remain in dist.
-  asar: { unpack: '{**/better-sqlite3/prebuilds/darwin-arm64.node,**/electron/backend/parser.cjs}' },
+  asar: { unpack: '{**/better-sqlite3/prebuilds/darwin-arm64.node,**/electron/backend/parser.cjs,**/electron/backend/cloud-worker.cjs}' },
   asarIntegrityDigest: true,
   prune: true,
   ignore: [/^\/(src|scripts|native|tests|artifacts|docs|\.codex|\.git)(\/|$)/, /^\/(AGENTS\.md|README\.md|tsconfig\.json|vite\.config\.ts|index\.html|package-lock\.json)$/],

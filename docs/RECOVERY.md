@@ -24,7 +24,10 @@ boundary. If Box delivery is pending, you can keep LabMate open or explicitly qu
 with that delivery recorded for the next launch. No backup scheduler runs after
 LabMate quits.
 
-Local checkpoints continue when Box is unavailable. Change destination if its
+Local checkpoints continue when Box is unavailable. Box access is isolated from
+saving and times out safely; pending copies remain recorded for retry. Incoming
+archives are copied into private local staging before verification or restore.
+Change destination if its
 folder was moved; pending archives retry automatically. Copies in the former
 folder are left alone. A failure never advances the captured revision or time.
 Check the overdue indicator and available-space warning, especially for large

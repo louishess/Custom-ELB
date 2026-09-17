@@ -76,7 +76,7 @@ test('unavailable destination preserves setup and failed automatic attempts acro
   const f = fixture(t);
   assert.equal((await f.invoke('configure', { password: 'pw' })).ok, true);
   fs.rmSync(f.destination, { recursive: true });
-  f.runtime.worker = {request: async (method,payload) => { if(method==='backups.inspect') return {ok:true,value:{}}; assert.equal(payload.destination,null); return {ok:true,value:{lastLocalBackupAt:new Date().toISOString(),pendingDeliveryCount:1,lastFailure:{message:'Box folder unavailable'}}}; }};
+  f.runtime.worker = {request: async (method,payload) => { if(method==='backups.inspect') return {ok:true,value:{}}; assert.equal(payload.destination,f.runtime.configStore.readRaw().value.destination); return {ok:true,value:{lastLocalBackupAt:new Date().toISOString(),pendingDeliveryCount:1,lastFailure:{message:'Box folder unavailable'}}}; }};
   f.runtime.startDailyBackup();
   await new Promise(resolve => setImmediate(resolve));
   f.runtime.stopDailyBackup();

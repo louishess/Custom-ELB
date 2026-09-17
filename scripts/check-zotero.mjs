@@ -40,7 +40,7 @@ async function launch(){
   application=await electron.launch({...(process.env.LABMATE_APP_BINARY?{executablePath:process.env.LABMATE_APP_BINARY,args:[]}:{args:['.']}),
     env:{...process.env,LABMATE_LIBRARY_ROOT:path.join(root,'library'),LABMATE_TEST_PROFILE:path.join(root,'profile'),LABMATE_ZOTERO_TEST_PORT:String(server.address().port)}});
   page=await application.firstWindow();page.on('pageerror',e=>errors.push(e.message));
-  await page.waitForFunction(()=>Boolean(window.labmate));
+  await page.getByRole('heading', { name: 'Lab notebooks', exact: true }).waitFor();
 }
 async function api(method,input){const result=await page.evaluate(async({method,input})=>{const[n,m]=method.split('.');return window.labmate[n][m](input);},{method,input});assert.equal(result.ok,true,JSON.stringify(result));return result.value;}
 async function check(name,fn){await fn();checks.push(name);console.log(`PASS ${name}`);}

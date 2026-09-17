@@ -21,7 +21,7 @@ try {
   await app.evaluate(({ clipboard }) => { clipboard.writeText = text => { globalThis.materialYieldCopiedText = text; }; });
   page = await app.firstWindow(); page.setDefaultTimeout(12000);
   page.on('pageerror', error => errors.push(error.message));
-  await page.waitForFunction(() => Boolean(window.labmate));
+  await page.getByRole('heading', { name: 'Lab notebooks', exact: true }).waitFor();
   const api = async (method, input) => {
     const response = await page.evaluate(({ method, input }) => {
       const [group, name] = method.split('.'); return window.labmate[group][name](input);
@@ -163,7 +163,8 @@ try {
     await page.getByText('60% yield', { exact: true }).waitFor();
     await page.getByText('Copied theoretical yield, actual yield and calculation basis.', { exact: true }).waitFor();
     assert.match(await app.evaluate(() => globalThis.materialYieldCopiedText), /Actual yield:.*600 µmol \(60%\)/);
-    await saved(documents => JSON.stringify(documents.data).includes('600'));
+    await saved(documents => JSON.stringify(documents.data).includes('"molarAmount":"600"'));
+    assert.match(JSON.stringify((await api('records.snapshot')).runs.find(item => item.id === runId).documents.data), /Unformatted purified product|purified/);
     await api('preferences.update', { layout: 'continuous' });
     await reopen(); await page.getByText('60% yield', { exact: true }).waitFor();
     await page.setViewportSize({ width: 1100, height: 900 });
