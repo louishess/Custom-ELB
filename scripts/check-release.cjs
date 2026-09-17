@@ -12,6 +12,7 @@ const labels={information:'Experimental information',method:'Method',notes:'Note
 (async()=>{
  application=await electron.launch({...process.env.LABMATE_APP_BINARY ? {executablePath:process.env.LABMATE_APP_BINARY,args:[]} : {args:['.']},env:{...process.env,LABMATE_LIBRARY_ROOT:path.join(root,'library'),LABMATE_TEST_PROFILE:path.join(root,'profile')}});
  page=await application.firstWindow(); page.setDefaultTimeout(15000); page.on('pageerror', e=>errors.push(e.message));
+ await application.evaluate(()=>{globalThis.releaseUnhandledExceptions=[];process.on('uncaughtException',error=>globalThis.releaseUnhandledExceptions.push(error.stack||String(error)));});
  await page.getByRole('heading',{name:'Lab notebooks',exact:true}).waitFor();
  let s=await api('records.createNotebook',{name:'Release notebook',description:'Synthetic test',discipline:'Chemistry',color:'sage'}); const nb=s.notebooks[0];
  const runs=[];
@@ -78,6 +79,7 @@ const labels={information:'Experimental information',method:'Method',notes:'Note
  await check('A10: Closing with an unblurred caption saves it durably',async()=>{
   await page.getByRole('button',{name:'Open attachment caption.txt',exact:true}).click(); await page.getByLabel('Caption',{exact:true}).fill('CAPTION SAVED WITHOUT BLUR');
   await Promise.all([page.waitForEvent('close'),application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close())]);
+  assert.deepEqual(await application.evaluate(async()=>{await new Promise(resolve=>setImmediate(resolve));return globalThis.releaseUnhandledExceptions;}),[],'Native window close must not raise a main-process exception');
   const {LibraryStore}=require('../electron/backend/store.cjs'); const reopened=new LibraryStore(path.join(root,'library')); try {assert.equal(reopened.snapshot().attachments[0].caption,'CAPTION SAVED WITHOUT BLUR');}finally{reopened.close();}
  });
  assert.deepEqual(errors,[]);

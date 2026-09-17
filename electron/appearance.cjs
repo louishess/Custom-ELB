@@ -18,6 +18,9 @@ function applyMaterial(window, theme, requested, preferences) {
   return status;
 }
 function installMaterial(window, theme, preferences) {
+  // BrowserWindow.webContents is a native getter that throws after the window
+  // is destroyed. Keep its EventEmitter reference for closed-event cleanup.
+  const contents = window.webContents;
   const update = () => applyMaterial(window, theme, undefined, preferences);
   const refresh = () => {
     if (window.isDestroyed?.()) return;
@@ -27,7 +30,7 @@ function installMaterial(window, theme, preferences) {
   };
   theme?.on?.('updated', update);
   window.on?.('focus', refresh);
-  window.webContents?.on?.('did-finish-load', update);
+  contents?.on?.('did-finish-load', update);
   // Motion changes are not guaranteed to emit nativeTheme.updated. AppKit
   // publishes them on NSWorkspace's notification center, not the distributed
   // center. Poll the public native getter as a fallback for missed events.
@@ -40,7 +43,7 @@ function installMaterial(window, theme, preferences) {
     if (subscription !== undefined) preferences?.unsubscribeWorkspaceNotification?.(subscription);
     theme?.removeListener?.('updated', update);
     window.removeListener?.('focus', refresh);
-    window.webContents?.removeListener?.('did-finish-load', update);
+    contents?.removeListener?.('did-finish-load', update);
   });
 }
 module.exports = {CHANNEL, ACCESSIBILITY_NOTIFICATION, appearanceStatus, applyMaterial, installMaterial};

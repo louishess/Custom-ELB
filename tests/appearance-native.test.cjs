@@ -97,6 +97,34 @@ test('preload forwards only the narrow immutable appearance status including nat
   assert.equal(events.length, 2);
 });
 
+test('appearance cleanup never reads BrowserWindow.webContents after native destruction', t => {
+  t.mock.timers.enable({apis:['setInterval']});
+  const theme = new EventEmitter(), window = new EventEmitter(), contents = new EventEmitter();
+  let destroyed = false, reads = 0, unsubscribed = false, notify;
+  Object.defineProperty(window, 'webContents', {get() {
+    if (destroyed) throw new TypeError('Object has been destroyed');
+    return contents;
+  }});
+  window.isDestroyed = () => destroyed;
+  const preferences = {
+    getAnimationSettings: () => { reads += 1; return {prefersReducedMotion:true}; },
+    subscribeWorkspaceNotification: (_name, listener) => { notify = listener; return 19; },
+    unsubscribeWorkspaceNotification: id => { assert.equal(id, 19); unsubscribed = true; },
+  };
+  installMaterial(window, theme, preferences);
+  assert.equal(contents.listenerCount('did-finish-load'), 1);
+  destroyed = true;
+  assert.doesNotThrow(() => { theme.emit('updated'); window.emit('focus'); notify?.(); });
+  assert.doesNotThrow(() => window.emit('closed'));
+  assert.equal(theme.listenerCount('updated'), 0);
+  assert.equal(window.listenerCount('focus'), 0);
+  assert.equal(contents.listenerCount('did-finish-load'), 0);
+  if (process.platform === 'darwin') assert.equal(unsubscribed, true);
+  const readsAfterClose = reads;
+  t.mock.timers.tick(3000);
+  assert.equal(reads, readsAfterClose);
+});
+
 test('renderer honors native reduced motion when Chromium reports false and preserves media-query support', () => {
   const document = {documentElement:{dataset:{}}};
   let mediaMatches = false;
