@@ -34,9 +34,11 @@ LabMate authenticates the encrypted archive, validates its file paths and hashes
 
 After a successful restore, LabMate closes the old editors, returns to the notebook directory, and applies the restored appearance and layout. Open a notebook to inspect its restored contents before continuing work.
 
-Version 0.5.0 accepts authenticated schema 1–4 archives and migrates older
-supported databases transactionally to schema 4. Restored citations are shared
-by every run of their experiment and work offline. Pending citation operations
+Version 0.5.1 accepts authenticated schema 1–5 archives and migrates older
+supported databases transactionally to schema 5. Restored citations are shared
+by every run of their experiment and work offline. Citation label mode, selected
+style and cached formatted labels are restored with the library. Older
+archives start with paper-title labels and no selected style. Pending citation operations
 and open pickers are reset during restore. Zotero's connection preference is
 local configuration, excluded from the archive; live browsing is revalidated.
 A reference originating from another Zotero database keeps its saved metadata

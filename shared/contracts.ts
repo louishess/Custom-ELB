@@ -9,9 +9,10 @@ export interface RunRecord { id: string; notebookId: string; experimentId: strin
 export interface AttachmentRecord { id: string; runId: string; name: string; mime: string; size: number; hash: string; caption: string; kind: 'image' | 'pdf' | 'spreadsheet' | 'scientific' | 'file'; createdAt: string }
 export interface SchemeRecord { id: string; notebookId: string; name: string; description: string; runIds: string[]; revision: number }
 export type PaletteId = 'sage' | 'ocean' | 'lavender' | 'terracotta' | 'rose' | 'graphite' | 'midnight';
-export interface Preferences { appearance: number; palette: PaletteId; layout: 'continuous' | 'tabs'; directoryView: 'grid' | 'list'; sort: string }
+export type CitationStyle = 'american-chemical-society' | 'apa' | 'chicago-author-date' | 'modern-language-association' | 'harvard-cite-them-right' | 'nature' | 'vancouver' | 'ieee';
+export interface Preferences { appearance: number; palette: PaletteId; layout: 'continuous' | 'tabs'; directoryView: 'grid' | 'list'; sort: string; citationLabel: 'title'|'formatted'; citationStyle: CitationStyle|'' }
 export interface CitationIdentity { sourceInstance: string; libraryType: 'user'|'group'; libraryId: string; itemKey: string }
-export interface CitationBibliography { version: 1; itemType: string; title: string; creators: {name: string; role: string}[]; date: string; publication: string; volume: string; issue: string; pages: string; doi: string; url: string; libraryLabel: string; fetchedAt: string; sourceVersion: number|null }
+export interface CitationBibliography { version: 1; itemType: string; title: string; creators: {name: string; role: string}[]; date: string; publication: string; volume: string; issue: string; pages: string; doi: string; url: string; libraryLabel: string; fetchedAt: string; sourceVersion: number|null; formattedCitation?: {text: string; style: CitationStyle; fetchedAt: string} }
 export interface ZoteroItem extends CitationIdentity { snapshot: CitationBibliography }
 export interface CitationRecord extends ZoteroItem { id: string; experimentId: string; createdAt: string; updatedAt: string }
 export interface ZoteroStatus { state: 'disconnected'|'connected'|'unavailable'|'disabled'|'unsupported'|'source-changed'|'failed'; enabled: boolean; generation: string; sourceInstance?: string; clientVersion?: string; message: string }
@@ -35,11 +36,12 @@ export interface Operations {
  'zotero.cancel': Op<{sessionId: string}, {cancelled: boolean}>;
  'zotero.libraries': Op<{generation: string; start: number}, ZoteroPage<ZoteroLibrary>>;
  'zotero.collections': Op<ZoteroQuery, ZoteroPage<ZoteroCollection>>;
- 'zotero.search': Op<ZoteroQuery & {query: string; collectionKey?: string}, ZoteroPage<ZoteroItem>>;
- 'zotero.item': Op<{generation: string; identity: CitationIdentity}, ZoteroItem>;
+ 'zotero.search': Op<ZoteroQuery & {query: string; collectionKey?: string; style?: CitationStyle}, ZoteroPage<ZoteroItem>>;
+ 'zotero.item': Op<{generation: string; identity: CitationIdentity; style?: CitationStyle}, ZoteroItem>;
  'citations.add': Op<CitationTarget & {generation: string; sessionId: string; items: CitationIdentity[]}>;
  'citations.remove': Op<CitationTarget & {id: string}>;
  'citations.previewRefresh': Op<CitationTarget & {id: string; generation: string; sessionId: string}, {token: string; item: ZoteroItem}>;
+ 'citations.refreshLabel': Op<CitationTarget & {id: string; generation: string; sessionId: string}>;
  'citations.applyRefresh': Op<CitationTarget & {token: string; sessionId: string}>;
  'records.snapshot': Op<undefined>;
  'records.createNotebook': Op<{name: string; description: string; discipline: string; color: NotebookRecord['color']}>;

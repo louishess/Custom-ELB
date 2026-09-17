@@ -559,3 +559,6 @@ mark { color: var(--ink-secondary); background: var(--surface-soft); padding: 2p
 .scheme-order-number { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 4px; background: var(--accent-soft); color: var(--accent-ink) !important; font-weight: 600; }
 .global-progress .icon-button { margin-left: 2px; }
 @media (max-width: 1050px) { .settings-preferences { grid-template-columns: 1fr; } .save-actions { display: none !important; } }
+
+.citation-label-settings { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.citation-label-settings .form-columns { margin: 16px 0 12px; }

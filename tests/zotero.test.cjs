@@ -7,8 +7,27 @@ const os=require('node:os');
 const path=require('node:path');
 const {createZoteroService,requestLocal}=require('../electron/zotero.cjs');
 const {schemas,normalizeItem,referenceText}=require('../shared/citations.cjs');
+const {plainCitation,citationLabel}=require('../shared/citations.cjs');
 const headers={'zotero-server-id':'test-source','zotero-api-version':'3','x-zotero-version':'11.test'};
 const raw={key:'ABCD1234',version:5,data:{itemType:'journalArticle',title:'Original title',creators:[{name:'Research Group',creatorType:'author'}],date:'2026'}};
+test('formatted labels are plain text, style-specific, and identify numeric-style references',()=>{
+  const identity={sourceInstance:'source',libraryType:'user',libraryId:'0',itemKey:raw.key};
+  assert.equal(plainCitation('<span>(Smith &amp; Jones, &#x2026;)</span><script>alert(1)</script>'),'(Smith & Jones, …)');
+  assert.equal(plainCitation('&#99999999;'),'�');
+  assert.equal(plainCitation('a'.repeat(4001)),'');
+  const item=normalizeItem({...raw,citation:'<sup>1</sup>',bib:'<div>Smith, A. <i>Coupling &amp; Catalysis</i>. 2026.</div>'},identity,'My Library',new Date(),'american-chemical-society');
+  assert.equal(item.snapshot.formattedCitation.text,'Smith, A. Coupling & Catalysis. 2026.');
+  assert.equal(citationLabel(item.snapshot,{citationLabel:'formatted',citationStyle:'american-chemical-society'}),item.snapshot.formattedCitation.text);
+  for(const preferences of [{citationLabel:'title',citationStyle:'american-chemical-society'},{citationLabel:'formatted',citationStyle:''},{citationLabel:'formatted',citationStyle:'apa'}])assert.equal(citationLabel(item.snapshot,preferences),'Original title');
+  assert.equal(normalizeItem({...raw,citation:'(Smith, 2026)'},identity,'My Library').snapshot.formattedCitation,undefined);
+});
+test('only the explicitly selected citation style is sent to Zotero',async t=>{
+  const {service,calls}=fake(t);const {generation}=await service.connect();
+  const identity={sourceInstance:'test-source',libraryType:'user',libraryId:'0',itemKey:raw.key};
+  await service.item(identity,generation);assert.equal(calls.at(-1).route,'/api/users/0/items/ABCD1234');
+  await service.item(identity,generation,undefined,'american-chemical-society');assert.match(calls.at(-1).route,/include=data%2Ccitation%2Cbib&style=american-chemical-society/);
+  await assert.rejects(()=>service.item(identity,generation,undefined,'https://example.com/style'),e=>e.code==='VALIDATION');
+});
 function fake(t,handler) {
   const calls=[];
   const service=createZoteroService({request:async(route,options)=>{calls.push({route,options});return handler?handler(route,options):{status:200,headers,body:JSON.stringify(raw)};}});

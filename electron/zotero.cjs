@@ -4,7 +4,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const {normalizeItem, identitySchema, librarySchema, validate, identityKey} = require('../shared/citations.cjs');
+const {normalizeItem, identitySchema, librarySchema, validate, identityKey, styleSchema} = require('../shared/citations.cjs');
 const LIMIT = 50;
 function fault(code, message) { return Object.assign(new Error(message), {code}); }
 
@@ -157,19 +157,22 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
     const selected=library(input);
     const collection=input.collectionKey?`/collections/${input.collectionKey}`:'';
     const query=new URLSearchParams({limit:String(LIMIT),start:String(input.start),q:input.query,qmode:'titleCreatorYear',sort:'title',direction:'asc'});
+    if(input.style) {validate(styleSchema,input.style);query.set('include','data,citation,bib');query.set('style',input.style);}
     return page(await json(`${prefix(input)}${collection}/items/top?${query}`,input.generation),input.start,raw=>{
       if(['attachment','note','annotation'].includes(raw.data?.itemType)||raw.data?.deleted) return null;
-      return normalizeItem(raw,{sourceInstance:current.sourceInstance,libraryType:input.libraryType,libraryId:input.libraryId,itemKey:raw.key},selected.name);
+      return normalizeItem(raw,{sourceInstance:current.sourceInstance,libraryType:input.libraryType,libraryId:input.libraryId,itemKey:raw.key},selected.name,new Date(),input.style);
     });
   }
-  async function item(identity,g,signal) {
+  async function item(identity,g,signal,style) {
     validate(identitySchema,identity); check(g);
     if(identity.libraryType==='user'&&identity.libraryId!=='0') throw fault('VALIDATION','Personal references must use the connected local library.');
     if(identity.sourceInstance!==current.sourceInstance) throw fault('STALE_REVISION','This citation belongs to another Zotero library. Its saved details are preserved.');
     // Saved group references may be refreshed without first paging through the group picker.
     const name=libraries.get(`${identity.libraryType}/${identity.libraryId}`)?.name || (identity.libraryType==='user'?'My Library':`Group ${identity.libraryId}`);
-    const result=await json(`${prefix(identity)}/items/${identity.itemKey}`,g,signal);
-    return normalizeItem(result.data,identity,name);
+    if(style) validate(styleSchema,style);
+    const format=style?`?${new URLSearchParams({include:'data,citation,bib',style})}`:'';
+    const result=await json(`${prefix(identity)}/items/${identity.itemKey}${format}`,g,signal);
+    return normalizeItem(result.data,identity,name,new Date(),style);
   }
   async function withSession(id,operation) {
     prune();
@@ -193,9 +196,9 @@ function createZoteroService({configPath, request = requestLocal, port = 23119, 
     status:()=>probe(), connect:()=>probe(true),
     disconnect:()=>{enabled=false; persist(); invalidate(); boundSource=null; return setState('disconnected','Zotero disconnected. Saved experiment citations remain available.');},
     libraries:listLibraries, collections, search, item, check, withSession, cancel,
-    async selected(items,g,signal) {
+    async selected(items,g,signal,style) {
       const result=[]; const seen=new Set();
-      for(const identity of items) if(!seen.has(identityKey(identity))) { seen.add(identityKey(identity)); result.push(await item(identity,g,signal)); }
+      for(const identity of items) if(!seen.has(identityKey(identity))) { seen.add(identityKey(identity)); result.push(await item(identity,g,signal,style)); }
       check(g); return result;
     },
     preview(sessionId,target,id,item,g) {

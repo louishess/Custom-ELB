@@ -14,7 +14,7 @@ PM-owned shared contract is `shared/contracts.ts`. Coordinate amendments with PM
 
 ## Cross-cutting frozen choices
 
-Storage schemaVersion 4 (schemas 1, 2 and 3 remain restorable and migrate transactionally); preferences add palette with default sage; section JSON root type doc, empty paragraph default. Revision increments on each record change. Run save includes all four documents in single transaction. Independent metadata changes can yield STALE_REVISION: UI must retain pending draft and offer reload/retry, not silently replace content. Notebook/experiment renames don't change numeric IDs. Repeat copies Information and Method; date supplied by renderer validated, author/title copied, Notes/Data empty, no attachments or scheme memberships copied. References belong to the experiment and are therefore shared by repeats without copying. Scheme membership is ordered UUID list, same notebook only, unique. Trash restore requires ancestors active (UI offers restore parent first); purge only trashed records and validates revision. Initial setup includes author entry field; no accounts. Trash permanence does not remove existing backups.
+Storage schemaVersion 5 (schemas 1, 2, 3 and 4 remain restorable and migrate transactionally); preferences add palette with default sage; section JSON root type doc, empty paragraph default. Revision increments on each record change. Run save includes all four documents in single transaction. Independent metadata changes can yield STALE_REVISION: UI must retain pending draft and offer reload/retry, not silently replace content. Notebook/experiment renames don't change numeric IDs. Repeat copies Information and Method; date supplied by renderer validated, author/title copied, Notes/Data empty, no attachments or scheme memberships copied. References belong to the experiment and are therefore shared by repeats without copying. Scheme membership is ordered UUID list, same notebook only, unique. Trash restore requires ancestors active (UI offers restore parent first); purge only trashed records and validates revision. Initial setup includes author entry field; no accounts. Trash permanence does not remove existing backups.
 
 Installation/package/lockfile and shared types belong to the primary integrator.
 All tests use disposable libraries and destinations; no real Box writes or
@@ -113,3 +113,31 @@ to the clipboard. It exposes no clipboard read or arbitrary write operation.
 Invalid or incomplete material input leaves the clipboard unchanged. The return
 value is `{copied: true, summary}`. This is a main-process operation; workers
 continue to own document persistence and exports.
+
+## Citation display settings (0.5.1)
+
+Schema 5 adds `preferences.citation_label` (`title` / `formatted`, default
+`title`) and `citation_style` (an allowlisted Zotero style ID, default empty).
+Schemas 1–4 migrate transactionally; schema 3/4 migration adds the columns,
+while schema 1/2 uses the existing preferences rebuild. Store open and staged
+restore reject invalid label/style values before using the library.
+
+`shared/citations.cjs` owns style IDs, label selection and bounded CSL HTML to
+plain-text conversion. Optional `formattedCitation` snapshot metadata stores
+text, style ID and retrieval time. Labels are used only when their style matches
+the current explicit preference; otherwise the paper title remains visible.
+No request chooses an implicit citation style. Selected styles use
+`include=data,citation,bib&style=<allowlisted ID>`. Numeric citations use the
+formatted bibliography entry as a useful standalone label. No arbitrary CSL URL
+is accepted. Style formatting is performed by Zotero, which may install the
+requested style if missing; LabMate never changes Zotero bibliography records.
+
+`citations.refreshLabel` takes the same guarded target, citation ID, generation
+and session as previewRefresh. Main derives the chosen style from the library,
+fetches authoritative formatting, and submits a normal cancellable internal
+applyRefresh mutation containing only the added/replaced formatted label.
+Existing bibliographic metadata is retained. The Settings updater serially
+walks active experiment links, uses each returned experiment revision, respects
+cancellation/restore/source guards, and reports unavailable labels. New
+associations and reviewed metadata refreshes fetch the selected style too.
+Renderer label selection uses the same shared helper in chips and the picker.

@@ -1,3 +1,4 @@
+import {citationLabel} from '../shared/citations.cjs';
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, Bold, ChevronDown, FileImage, FileSpreadsheet, FileText, FlaskConical, Highlighter, Italic, Link, List, ListOrdered, Mic, Plus, Redo2, Sigma, Subscript, Superscript, Underline, Undo2, X } from 'lucide-react';
@@ -281,8 +282,8 @@ export function EntrySections({ entry, documents, layout, activeSection, onAttac
   return <RichEntryEditor run={entry} attachments={attachments} documents={documents} layout={layout} activeSection={activeSection} onDocumentsChange={onDocumentsChange} onEditor={onEditor} onFocusSection={onFocusSection} onAttachment={onAttachment} onAddAttachments={onAddAttachments} readOnly={readOnly} resetToken={resetToken} />;
 }
 
-export function CitationChips({ onOpen, disabled = false, citations = [] }: { onOpen?: (id?: string) => void; disabled?: boolean; citations?: import('../shared/contracts').CitationRecord[] }) {
-  return <div className="citation-chips" aria-label="Experiment citations"><FileText size={14} /><span className="citation-label">Citations</span>{citations.map(c => <button key={c.id} type="button" onClick={() => onOpen?.(c.id)} title={`${c.snapshot.title || 'Untitled reference'} · Shared across all runs`}>{c.snapshot.title || 'Untitled reference'}</button>)}<button type="button" className="citation-plus" disabled={disabled} onClick={() => onOpen?.()} title="Add references to every run of this experiment"><Plus size={12} />Add citation</button></div>;
+export function CitationChips({ onOpen, disabled = false, citations = [], preferences }: { preferences: import('../shared/contracts').Preferences; onOpen?: (id?: string) => void; disabled?: boolean; citations?: import('../shared/contracts').CitationRecord[] }) {
+  return <div className="citation-chips" aria-label="Experiment citations"><FileText size={14} /><span className="citation-label">Citations</span>{citations.map(c => <button key={c.id} type="button" onClick={() => onOpen?.(c.id)} title={`${citationLabel(c.snapshot, preferences)} · ${c.snapshot.title || 'Untitled reference'} · Shared across all runs`}>{citationLabel(c.snapshot, preferences)}</button>)}<button type="button" className="citation-plus" disabled={disabled} onClick={() => onOpen?.()} title="Add references to every run of this experiment"><Plus size={12} />Add citation</button></div>;
 }
 
 export function useDraftDocuments(documents: SectionDocuments) {

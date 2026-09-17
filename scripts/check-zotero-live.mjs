@@ -94,6 +94,21 @@ try {
     s=await api('records.snapshot');assert.equal(s.citations.length,1);assert.equal(s.citations[0].snapshot.title,citation.snapshot.title);
     await openNotebook();await page.locator('.citation-chips').getByRole('button',{name:citation.snapshot.title,exact:true}).waitFor();
   });
+  await check('An explicitly selected ACS style supplies a saved, readable label from the actual Zotero client',async()=>{
+    await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('tab',{name:'Integrations',exact:true}).click();
+    assert.equal(await page.getByLabel('Citation style',{exact:true}).inputValue(),'');
+    await page.getByRole('button',{name:'Connect Zotero',exact:true}).click();
+    await page.getByText('Connected to Zotero on this Mac.',{exact:true}).waitFor();
+    await page.getByLabel('Show citations as',{exact:true}).selectOption('formatted');
+    await page.getByLabel('Citation style',{exact:true}).selectOption('american-chemical-society');
+    await page.getByText('1 citation label updated.',{exact:true}).waitFor();
+    const s=await api('records.snapshot'), label=s.citations[0].snapshot.formattedCitation;
+    assert.equal(label.style,'american-chemical-society');assert.ok(label.text.length>10);assert.ok(!/<(?:div|span|i|sup)\b/i.test(label.text));
+    await page.getByRole('button',{name:'Done',exact:true}).click();
+    await page.locator('.citation-chips').getByRole('button',{name:label.text,exact:true}).waitFor();
+    await api('zotero.disconnect');await application.close();application=null;await launch();await openNotebook();
+    await page.locator('.citation-chips').getByRole('button',{name:label.text,exact:true}).waitFor();
+  });
   assert.deepEqual(errors,[]);
   await writeFile(path.join(output,'live-checks.json'),JSON.stringify({verifiedAt:new Date().toISOString(),clientVersion,packagedBinary:process.env.LABMATE_APP_BINARY,checks,errors,personalMetadataRetained:false,workingLabMateLibraryUsed:false,zoteroOperations:'Read-only local API'},null,2));
   console.log(`${checks.length} live Zotero checks passed; disposable data removed.`);

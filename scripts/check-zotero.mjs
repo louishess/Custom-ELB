@@ -27,6 +27,10 @@ const server=http.createServer((req,res)=>{
     data=r?.key===records[0].key?{...r,data:{...r.data,title}}:r;
   }
   if(data===undefined){res.writeHead(404,headers);return res.end('{}');}
+  if(url.searchParams.has('style')) {
+    const format=r=>r?.data?.itemType?{...r,citation:url.searchParams.get('style')==='american-chemical-society'?'<sup>1</sup>':'<span>(Research Group 2025)</span>',bib:`<div>Research Group. <i>${r.data.title}</i>. 2025.</div>`}:r;
+    data=Array.isArray(data)?data.map(format):format(data);
+  }
   if(Array.isArray(data)){headers['Total-Results']=String(data.length);const start=Number(url.searchParams.get('start')||0);data=data.slice(start,start+Number(url.searchParams.get('limit')||50));}
   res.writeHead(200,headers);res.end(JSON.stringify(data));
 });
@@ -130,6 +134,37 @@ try {
     assert.equal(await page.locator('.modal').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
     await page.screenshot({path:path.join(output,'04-dark-narrow.png')});
     await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
+  });
+  await check('Citation label settings require an explicit style, update existing links, and persist offline',async()=>{
+    await page.getByRole('button',{name:'Add citation',exact:true}).click();
+    await page.getByLabel(`Select ${title}`,{exact:true}).check();
+    await page.getByRole('button',{name:'Add to experiment (1)',exact:true}).click();
+    await page.getByText('Citations added to every run of this experiment.',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Done',exact:true}).click();
+    assert.equal((await api('records.snapshot')).citations[0].snapshot.formattedCitation,undefined);
+    assert.ok(requests.every(r=>!r.path.includes('style=')));
+    await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('tab',{name:'Integrations',exact:true}).click();
+    assert.equal(await page.getByLabel('Citation style',{exact:true}).inputValue(),'');
+    await page.getByLabel('Show citations as',{exact:true}).selectOption('formatted');
+    await page.getByText('Choose a citation style to use formatted labels. Paper titles are shown until then.',{exact:true}).waitFor();
+    assert.equal(await page.getByLabel('Citation style',{exact:true}).inputValue(),'');
+    await page.getByLabel('Citation style',{exact:true}).selectOption('american-chemical-society');
+    await page.getByText('1 citation label updated.',{exact:true}).waitFor();
+    let s=await api('records.snapshot');assert.equal(s.preferences.citationStyle,'american-chemical-society');
+    assert.equal(s.citations[0].snapshot.title,title);assert.equal(s.citations[0].snapshot.formattedCitation.text,`Research Group. ${title}. 2025.`);
+    await page.screenshot({path:path.join(output,'05-citation-settings.png')});
+    await page.getByRole('button',{name:'Done',exact:true}).click();
+    await page.locator('.citation-chips').getByRole('button',{name:`Research Group. ${title}. 2025.`,exact:true}).waitFor();
+    await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('tab',{name:'Integrations',exact:true}).click();
+    await page.getByLabel('Citation style',{exact:true}).selectOption('chicago-author-date');await page.getByText('1 citation label updated.',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Done',exact:true}).click();
+    await api('zotero.disconnect');await application.close();application=null;await launch();await openNotebook();
+    await page.locator('.citation-chips').getByRole('button',{name:'(Research Group 2025)',exact:true}).waitFor();
+    await page.screenshot({path:path.join(output,'06-formatted-label.png')});
+    s=await api('records.snapshot');assert.equal(s.preferences.citationLabel,'formatted');assert.equal(s.preferences.citationStyle,'chicago-author-date');
+    await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('tab',{name:'Integrations',exact:true}).click();
+    await page.getByLabel('Show citations as',{exact:true}).selectOption('title');await page.getByRole('button',{name:'Done',exact:true}).click();
+    await page.locator('.citation-chips').getByRole('button',{name:title,exact:true}).waitFor();
   });
   assert.deepEqual(errors,[]);assert.ok(requests.every(r=>r.method==='GET'&&r.path.startsWith('/api/')));
   await writeFile(path.join(output,'checks.json'),JSON.stringify({checks,errors,requestCount:requests.length,packaged:!!process.env.LABMATE_APP_BINARY},null,2));

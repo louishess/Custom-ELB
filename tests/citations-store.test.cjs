@@ -20,6 +20,25 @@ function fixture(t) {
   const item = (overrides={}) => normalizeItem({key:'ABCD1234', version:1, data:{itemType:'journalArticle', title:'A reference', creators:[{name:'Research Group', creatorType:'author'}], date:'2025', DOI:'10.1000/example'}}, {sourceInstance:'server-A', libraryType:'user', libraryId:'0', itemKey:'ABCD1234', ...overrides}, 'My Library');
   return {root, store, nb, experimentId, target, item, run:s.runs[0]};
 }
+test('schema 4 gains unset citation style; labels and preferences survive encrypted recovery',async t=>{
+  const f=fixture(t);
+  value(f.store.dispatch('citations.add',{...f.target(),items:[f.item()]}));
+  const before=f.store.snapshot();
+  f.store.db.exec('ALTER TABLE preferences DROP COLUMN citation_label');f.store.db.exec('ALTER TABLE preferences DROP COLUMN citation_style');f.store.db.pragma('user_version = 4');
+  f.store.close();f.store.reopen();
+  const migrated=f.store.snapshot();assert.equal(migrated.schemaVersion,5);
+  assert.equal(migrated.preferences.citationStyle,'');assert.equal(migrated.preferences.citationLabel,'title');
+  assert.deepEqual(migrated.citations,before.citations);
+  const item=f.item();item.snapshot.formattedCitation={text:'(Research Group 2025)',style:'chicago-author-date',fetchedAt:new Date().toISOString()};
+  value(f.store.dispatch('citations.applyRefresh',{...f.target(),id:migrated.citations[0].id,item}));
+  value(f.store.dispatch('preferences.update',{citationLabel:'formatted',citationStyle:'chicago-author-date'}));
+  assert.equal(f.store.dispatch('preferences.update',{citationStyle:'https://example.com/style'}).ok,false);
+  const expected=f.store.snapshot();const service=createBackupService(f.store);
+  const archive=await service.create({password:'label recovery'});
+  value(f.store.dispatch('preferences.update',{citationStyle:'',citationLabel:'title'}));
+  await service.restore({source:path.join(f.root,'backups',archive.name),password:'label recovery'});
+  assert.deepEqual(f.store.snapshot(),{...expected,libraryGeneration:f.store.libraryGeneration});
+});
 test('one experiment citation survives repeat/reopen, stays independent, and does not change run revisions', t => {
   const f = fixture(t);
   const a = value(f.store.dispatch('citations.add', {...f.target(), items:[f.item(), f.item()]}));
@@ -62,8 +81,8 @@ test('run trash/purge preserves experiment citations; parent trash rejects edits
 test('schema 3 migration preserves legacy associations without promoting run scope', t => {
   const f=fixture(t);
   f.store.db.prepare('INSERT INTO citation_associations VALUES (?, ?, ?, ?, ?, ?, ?)').run(require('node:crypto').randomUUID(),f.run.id,'old','0','ABCD1234','{}',new Date().toISOString());
-  f.store.db.exec('DROP TABLE experiment_citations'); f.store.db.pragma('user_version = 3'); f.store.close(); f.store.reopen();
-  const s=f.store.snapshot(); assert.equal(s.schemaVersion,4); assert.equal(s.legacyCitationCount,1); assert.deepEqual(s.citations,[]);
+  f.store.db.exec('DROP TABLE experiment_citations'); f.store.db.exec('ALTER TABLE preferences DROP COLUMN citation_label'); f.store.db.exec('ALTER TABLE preferences DROP COLUMN citation_style'); f.store.db.pragma('user_version = 3'); f.store.close(); f.store.reopen();
+  const s=f.store.snapshot(); assert.equal(s.schemaVersion,5); assert.equal(s.legacyCitationCount,1); assert.deepEqual(s.citations,[]);
 });
 test('citation backup restores complete metadata and rejects pre-restore operations', async t => {
   const f=fixture(t); const s=value(f.store.dispatch('citations.add', {...f.target(), items:[f.item()]}));

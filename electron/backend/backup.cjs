@@ -625,6 +625,10 @@ function validateCandidateSchema(candidatePath, manifestSchemaVersion, store, op
       }
     }
     if (manifestSchemaVersion >= 4) require('../../shared/citations.cjs').validateStoredCitations(db);
+    if (manifestSchemaVersion >= 5) {
+      const labels = db.prepare('SELECT citation_label, citation_style FROM preferences WHERE id=1').get();
+      if (!labels || !['title','formatted'].includes(labels.citation_label) || (labels.citation_style !== '' && !require('../../shared/citations.cjs').styleSchema.safeParse(labels.citation_style).success)) throw backupError('CORRUPT_BACKUP', 'The restored database citation preferences are invalid.');
+    }
     if (manifestSchemaVersion >= 2) {
       const preferences = db.prepare('SELECT palette FROM preferences WHERE id = 1').get();
       if (!preferences || !palettesForVersion(manifestSchemaVersion).includes(preferences.palette)) {

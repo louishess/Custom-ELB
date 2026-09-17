@@ -1,3 +1,42 @@
+# LabMate 0.5.1 citation label and style settings — September 12, 2026
+
+Settings → Integrations now offers Paper title / Formatted citation and a
+citation-style selector. No style is selected by default. ACS, APA, Chicago
+(author–date), MLA, Harvard Cite Them Right, Nature, Vancouver and IEEE are
+available. Labels are rendered by Zotero; numbered styles use the full
+formatted reference for identification. Saved labels work offline. The
+setting applies to labels in LabMate, preserving the export reference format.
+
+Schema 5 adds label/style preferences and supports stored formatted labels.
+Schema 4 migration preserves citations and starts with title labels and no
+style. Label updates preserve bibliographic metadata that has not been accepted
+through the existing refresh preview. Earlier schema 1–3 migrations/recovery
+continue to pass; the new preferences and labels roundtrip in encrypted backups.
+
+| Check | Result |
+| --- | --- |
+| TypeScript, CommonJS syntax, Vite, arm64 packaging | Passed |
+| Backend, bridge, migration, backup, exports and packaged native tests | 160 passed, zero failures/skips |
+| Packaged Zotero workflows | 9 passed, including explicit style choice, existing-reference label update, switching styles and offline restart |
+| Live packaged Zotero workflows | 6 passed, including an explicitly selected ACS label retained after an offline restart |
+| Existing packaged functional/UI workflows | 12 functional and 13 UI checks passed |
+| Visual inspection | Narrow Midnight Purple Settings and the formatted label in a run were readable and unclipped |
+
+The live check used one reference from running Zotero build
+`11.0.SOURCE.1e4dabc91` in a disposable LabMate library. Zotero records and the
+working LabMate library were unchanged, and all temporary personal citation
+metadata was removed. ACS/Chicago style switching also passed controlled fixture checks. The live
+style check was ACS; other styles were not individually verified against the
+running Zotero client. No public distribution, signing identity or notarization
+was configured. The review app uses a verified local ad-hoc signature.
+
+- App: `out/LabMate-darwin-arm64/LabMate.app`
+- ZIP: `artifacts/LabMate-0.5.1-macOS-arm64.zip`
+- Evidence, screenshots and package manifest: `artifacts/citation-labels/`
+- Setup and behavior: `ZOTERO.md`
+
+---
+
 # LabMate 0.5.0 Zotero acceptance — September 12, 2026
 
 The basic Zotero integration is implemented: a local read-only library picker,

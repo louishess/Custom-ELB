@@ -1,3 +1,4 @@
+import {citationLabel, CITATION_STYLES} from '../shared/citations.cjs';
 import { useEffect, useRef, useState } from 'react';
 import { Check, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { Modal } from './components';
@@ -12,7 +13,7 @@ function Bibliography({item}: {item: ZoteroItem}) {
   const s = item.snapshot;
   return <div className="citation-bibliography"><h3>{s.title || 'Untitled reference'}</h3>
     {authors(item) && <p>{authors(item)}</p>}
-    <dl>{[['Date', s.date], ['Publication', s.publication], ['Volume / issue / pages', [s.volume, s.issue, s.pages].filter(Boolean).join(' / ')], ['DOI', s.doi], ['URL', s.url], ['Library', s.libraryLabel]].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    <dl>{[['Formatted citation', s.formattedCitation ? `${s.formattedCitation.text} · ${CITATION_STYLES[s.formattedCitation.style]}` : ''], ['Date', s.date], ['Publication', s.publication], ['Volume / issue / pages', [s.volume, s.issue, s.pages].filter(Boolean).join(' / ')], ['DOI', s.doi], ['URL', s.url], ['Library', s.libraryLabel]].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     <small>Saved reference details · {new Date(s.fetchedAt).toLocaleDateString()}</small>
   </div>;
 }
@@ -47,6 +48,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
   const citations = snapshot.citations.filter(c => c.experimentId === experiment?.id);
   const added = new Set(citations.map(itemKey));
   const library = libraries.find(l => `${l.libraryType}/${l.libraryId}` === libraryId);
+  const style = snapshot.preferences.citationStyle || undefined;
   const connected = connection?.state === 'connected';
   const target = (): CitationTarget => ({experimentId: experiment!.id, expectedRevision: experiment!.revision, libraryGeneration:snapshot.libraryGeneration});
   const isSaved = detail && 'id' in detail ? citations.find(c => c.id === detail.id) : undefined;
@@ -87,7 +89,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
     if (!connected || !connection || !library) return;
     setSearching(true);
     const timer = setTimeout(() => {
-      void window.labmate?.zotero.search({generation:connection.generation, libraryType:library.libraryType, libraryId:library.libraryId, query, start:0, ...(collectionKey ? {collectionKey} : {})}).then(result => {
+      void window.labmate?.zotero.search({generation:connection.generation, libraryType:library.libraryType, libraryId:library.libraryId, query, start:0, style, ...(collectionKey ? {collectionKey} : {})}).then(result => {
         if (!mounted.current || epoch !== queryEpoch.current) return;
         setSearching(false);
         if (result.ok) { setItems(result.value.items); setNextStart(result.value.nextStart); }
@@ -95,7 +97,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
       });
     }, 250);
     return () => { clearTimeout(timer); queryEpoch.current++; };
-  }, [query, collectionKey, libraryId, !!library, connected, connection?.generation]);
+  }, [query, collectionKey, libraryId, !!library, connected, connection?.generation, style]);
 
   const more = async (kind: 'libraries'|'collections'|'items') => {
     if (!connection || !library) return;
@@ -113,7 +115,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
         if (result?.ok) { setCollections(old => [...old, ...result.value.items]); setCollectionNext(result.value.nextStart); }
         else if(result) failure(result.error.message);
       } else if (kind === 'items' && nextStart !== null) {
-        const result = await window.labmate?.zotero.search({generation:connection.generation,libraryType:library.libraryType,libraryId:library.libraryId,query,start:nextStart,...(collectionKey?{collectionKey}:{})});
+        const result = await window.labmate?.zotero.search({generation:connection.generation,libraryType:library.libraryType,libraryId:library.libraryId,query,start:nextStart,style,...(collectionKey?{collectionKey}:{})});
         if (!mounted.current || epoch !== queryEpoch.current) return;
         if (result?.ok) { setItems(old => [...new Map([...old,...result.value.items].map(item => [itemKey(item),item])).values()]); setNextStart(result.value.nextStart); }
         else if(result) failure(result.error.message);
@@ -153,13 +155,13 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
       <ZoteroConnection readOnly={readOnly} onStatus={setConnection} />
       {!experimentId && <label className="field-label">Add references to experiment<select aria-label="Citation destination experiment" value={destination} disabled={busy} onChange={e => {setDestination(e.target.value);setDetail(null);setCandidate(null);setSelected([]);}}><option value="">Choose an experiment</option>{activeExperiments.map(e => <option key={e.id} value={e.id}>{snapshot.notebooks.find(n => n.id===e.notebookId)?.name} · {e.experimentNumber} — {e.label}</option>)}</select></label>}
       {snapshot.legacyCitationCount > 0 && <p className="panel-warning">{snapshot.legacyCitationCount} older run references were preserved in the library and need migration review.</p>}
-      {experiment && <section className="experiment-references" aria-label="Experiment citations"><h3>Experiment references <span>({citations.length})</span></h3><p className="field-help">Shared across all runs, including completed runs.</p>{citations.length ? citations.map(c => <button type="button" className="saved-citation" key={c.id} disabled={busy} onClick={() => {setDetail(c);setCandidate(null);}}><Check size={14}/><span>{c.snapshot.title || 'Untitled reference'}<small>{authors(c)}{c.snapshot.date ? ` · ${c.snapshot.date}` : ''}</small></span></button>) : <p className="muted-note">No citations are associated with this experiment yet.</p>}</section>}
+      {experiment && <section className="experiment-references" aria-label="Experiment citations"><h3>Experiment references <span>({citations.length})</span></h3><p className="field-help">Shared across all runs, including completed runs.</p>{citations.length ? citations.map(c => <button type="button" className="saved-citation" key={c.id} disabled={busy} onClick={() => {setDetail(c);setCandidate(null);}}><Check size={14}/><span>{citationLabel(c.snapshot,snapshot.preferences)}<small>{snapshot.preferences.citationLabel==='formatted'?c.snapshot.title:authors(c)}{c.snapshot.date ? ` · ${c.snapshot.date}` : ''}</small></span></button>) : <p className="muted-note">No citations are associated with this experiment yet.</p>}</section>}
       {connected && <>
         <div className="form-columns"><label className="field-label">Zotero library<select aria-label="Zotero library" value={libraryId} disabled={busy} onChange={e => {setLibraryId(e.target.value);setDetail(null);setCandidate(null);}}>{libraries.map(l => <option key={`${l.libraryType}/${l.libraryId}`} value={`${l.libraryType}/${l.libraryId}`}>{l.name}</option>)}</select></label><label className="field-label">Collection<select aria-label="Zotero collection" value={collectionKey} disabled={busy} onChange={e=>setCollectionKey(e.target.value)}><option value="">All references</option>{collections.map(c => <option key={c.key} value={c.key}>{c.parentKey ? `${collections.find(p=>p.key===c.parentKey)?.name || 'Subcollection'} / ` : ''}{c.name}</option>)}</select></label></div>
         <div className="citation-actions">{libraryNext!==null && <button className="text-button" disabled={busy} onClick={()=>void more('libraries')}>More libraries</button>}{collectionNext!==null && <button className="text-button" disabled={busy} onClick={()=>void more('collections')}>More collections</button>}</div>
         <div className="search-field"><Search size={16}/><input aria-label="Search Zotero references" placeholder="Search title, author, or year" value={query} disabled={busy} onChange={e=>setQuery(e.target.value)}/></div>
         <div className="citation-results" aria-label="Zotero search results" aria-busy={searching}>{searching ? <p role="status">Searching Zotero…</p> : items.length ? items.map(item => {
-          const key=itemKey(item); return <div className="citation-result" key={key}><input type="checkbox" aria-label={`Select ${item.snapshot.title || 'Untitled reference'}`} checked={added.has(key)||selected.includes(key)} disabled={busy||added.has(key)||!experiment||readOnly} onChange={e=>setSelected(old=>e.target.checked?[...old,key]:old.filter(id=>id!==key))}/><button type="button" disabled={busy} onClick={()=>{setDetail(item);setCandidate(null);}}><strong>{item.snapshot.title || 'Untitled reference'}</strong><small>{authors(item)}{item.snapshot.date?` · ${item.snapshot.date}`:''}</small><small>{item.snapshot.publication}</small></button>{added.has(key)&&<span className="soft-badge">Added</span>}</div>;
+          const key=itemKey(item); return <div className="citation-result" key={key}><input type="checkbox" aria-label={`Select ${item.snapshot.title || 'Untitled reference'}`} checked={added.has(key)||selected.includes(key)} disabled={busy||added.has(key)||!experiment||readOnly} onChange={e=>setSelected(old=>e.target.checked?[...old,key]:old.filter(id=>id!==key))}/><button type="button" disabled={busy} onClick={()=>{setDetail(item);setCandidate(null);}}><strong>{citationLabel(item.snapshot,snapshot.preferences)}</strong>{snapshot.preferences.citationLabel==='formatted'&&<small>{item.snapshot.title}</small>}<small>{authors(item)}{item.snapshot.date?` · ${item.snapshot.date}`:''}</small><small>{item.snapshot.publication}</small></button>{added.has(key)&&<span className="soft-badge">Added</span>}</div>;
         }) : <p className="muted-note">No references on this page.{nextStart!==null?' Continue to the next page.':''}</p>}</div>
         {nextStart!==null && <button className="button button-small" disabled={busy||searching} onClick={()=>void more('items')}>Load more references</button>}
       </>}

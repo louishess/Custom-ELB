@@ -252,11 +252,13 @@ function payloadShapeError(method, payload, internal = true) {
     case 'preferences.update':
       return isPlainObject(payload)
         && Object.keys(payload).length > 0
-        && Object.keys(payload).every(key => ['appearance', 'palette', 'layout', 'directoryView', 'sort'].includes(key))
+        && Object.keys(payload).every(key => ['appearance', 'palette', 'layout', 'directoryView', 'sort', 'citationLabel', 'citationStyle'].includes(key))
         && (payload.appearance === undefined || isInteger(payload.appearance, { min: 0, max: 100 }))
         && (payload.palette === undefined || PALETTES.includes(payload.palette))
         && (payload.layout === undefined || ['continuous', 'tabs'].includes(payload.layout))
         && (payload.directoryView === undefined || ['grid', 'list'].includes(payload.directoryView))
+        && (payload.citationLabel === undefined || ['title','formatted'].includes(payload.citationLabel))
+        && (payload.citationStyle === undefined || payload.citationStyle === '' || require('../../shared/citations.cjs').styleSchema.safeParse(payload.citationStyle).success)
         && (payload.sort === undefined || isString(payload.sort, { min: 1, max: 128 }))
         ? null : fail('Invalid preferences.update payload');
     case 'trash.move':
