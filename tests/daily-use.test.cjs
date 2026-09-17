@@ -96,14 +96,38 @@ test('Glass falls back to Solid for accessibility and unsupported platforms', ()
 
 test('process interruption at every durable restore phase recovers one coherent library', async () => {
   const {spawnSync}=require('node:child_process');
-  const original=library(); const made=await createBackupService(original).create(request()); const archive=path.join(original.root,'backups',made.name);
+  const objectBytes=new Map();
+  const attach=(store,name,text)=>{
+    const bytes=Buffer.from(text),hash=crypto.createHash('sha256').update(bytes).digest('hex');
+    objectBytes.set(hash,bytes);fs.writeFileSync(path.join(store.root,'objects',hash),bytes);
+    store.addAttachment({id:crypto.randomUUID(),runId:store.snapshot().runs[0].id,name,mime:'text/plain',kind:'file',hash,size:bytes.length,caption:name,createdAt:new Date().toISOString()});
+    return hash;
+  };
+  const original=library();
+  const incomingHash=attach(original,'incoming.txt','Incoming archive object only');
+  attach(original,'shared.txt','Object shared by both libraries');
+  const incoming=original.snapshot();
+  const made=await createBackupService(original).create(request()); const archive=path.join(original.root,'backups',made.name);
   for(const phase of ['prepared','db-moved','objects-moved','candidate-db-moved','candidate-objects-moved','opened','committed']) {
-    const current=library(); const before=current.snapshot(); const targetRoot=current.root; current.close();
+    const current=library();
+    const currentHash=attach(current,'current.txt',`Current library object only: ${phase}`);
+    attach(current,'shared.txt','Object shared by both libraries');
+    const before=current.snapshot(); const targetRoot=current.root; current.close();
     const child=spawnSync(process.execPath,[path.join(__dirname,'helpers','restore-crash.cjs'),targetRoot,archive,phase],{encoding:'utf8',timeout:15000});
     assert.equal(child.status,73,`${phase}: ${child.stderr}`);
     const recovered=new LibraryStore(targetRoot); stores.add(recovered);
-    const expected=['opened','committed'].includes(phase) ? original.snapshot().runs[0].id : before.runs[0].id;
-    assert.equal(recovered.snapshot().runs[0].id,expected,phase);
+    const committed=['opened','committed'].includes(phase);
+    const expected=committed ? incoming : before;
+    const snapshot=recovered.snapshot();
+    assert.deepEqual(snapshot,{...expected,libraryGeneration:snapshot.libraryGeneration},phase);
+    assert.deepEqual(fs.readdirSync(path.join(targetRoot,'objects')).sort(),expected.attachments.map(a=>a.hash).sort(),`${phase}: object directory matches the recovered database`);
+    for(const attachment of snapshot.attachments) {
+      const bytes=fs.readFileSync(path.join(targetRoot,'objects',attachment.hash));
+      assert.equal(bytes.length,attachment.size,phase);
+      assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),attachment.hash,phase);
+      assert.deepEqual(bytes,objectBytes.get(attachment.hash),phase);
+    }
+    assert.equal(fs.existsSync(path.join(targetRoot,'objects',committed ? currentHash : incomingHash)),false,`${phase}: the other library's unique object is not live`);
     assert.equal(recovered.db.pragma('integrity_check',{simple:true}),'ok',phase);
     assert.deepEqual(recovered.db.pragma('foreign_key_check'),[],phase);
   }

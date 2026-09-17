@@ -1,7 +1,7 @@
 # LabMate 0.6.0 release record
 
-Status: implementation and release-candidate qualification. Real-account Box
-recovery, user dictation acceptance, and installation acceptance must be recorded
+Status: implementation and release-candidate qualification. Final packaged
+checks, user dictation acceptance, and installation acceptance must be recorded
 before treating this as the daily-use release. No software can promise literal
 100% reliability.
 
@@ -74,7 +74,9 @@ warning. Startup completes cleanup or restores the previous coherent pair.
 | A14 terminal preview progress | `scripts/check-release.cjs` |
 
 Recovery tests terminate a real subprocess at each durable restore phase and
-reopen the library. Lifecycle checks use a disposable password with actual macOS
+reopen the library, comparing the complete database and distinct old/new object
+sets. Genuine schema-4/5 encrypted archives cover citation and appearance
+migration in addition to schemas 1–3 and 6. Lifecycle checks use a disposable password with actual macOS
 secure storage, restart with delivery queued, simulate resume, save on quit,
 change passwords, and rehearse older archives with their original password.
 They do not contact the user's Box account.
@@ -104,10 +106,13 @@ the working library before installation or migration.
 The working schema-5 library was copied and verified before migration. The user
 configured secure storage and a dedicated UCLA Box folder. The first encrypted
 checkpoint was verified locally, observed online, and freshly downloaded with an
-identical SHA-256 hash. Evidence is in `artifacts/release/box-online/`.
+identical SHA-256 hash. In build `f1d3bf7`, the user supplied the password for a
+successful recovery rehearsal and a separate empty-profile restore. All eleven
+record/preferences tables matched the working library, as did its attachment
+hash. The rehearsed archive is pinned. Evidence is in
+`artifacts/release/box-online/`, `live-rehearsal.json`, and `live-restoration.json`.
 
-Remaining live gates: test and restore the downloaded archive in a disposable
-profile using the password; pin that rehearsal;
-verify credentials after installation/restart; dictate a real utterance and repeat
+Remaining live gates: verify credentials after installation/restart; dictate a
+real utterance and repeat
 offline; inspect Glass on the actual desktop and with macOS accessibility settings.
 Do not infer these outcomes from fixture tests.

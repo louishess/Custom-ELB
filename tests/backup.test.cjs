@@ -547,7 +547,57 @@ test('authenticated schema 3 archive without citation tables restores and migrat
   assert.equal(restored.schemaVersion,6);
 });
 
-test('schema 5 Midnight Purple survives an encrypted backup and restore', async t => {
+for (const version of [4, 5]) test(`authenticated schema ${version} archive migrates citations, preferences, and objects from its original schema`, async t => {
+  const fixture = setup(t);
+  const { normalizeItem } = require('../shared/citations.cjs');
+  const experiment = fixture.store.snapshot().experiments[0];
+  const item = normalizeItem({key:'ABCD1234',version:1,data:{itemType:'journalArticle',title:`Schema ${version} reference`,creators:[{name:'Legacy Research Group',creatorType:'author'}],date:'2025'}},
+    {sourceInstance:'legacy-zotero',libraryType:'user',libraryId:'0',itemKey:'ABCD1234'},'Legacy library');
+  value(fixture.store.dispatch('citations.add',{experimentId:experiment.id,expectedRevision:experiment.revision,libraryGeneration:fixture.store.libraryGeneration,items:[item]}));
+  value(fixture.store.dispatch('preferences.update',{
+    appearance:79,palette:'midnight',layout:'tabs',directoryView:'list',sort:'number-desc',material:'glass',
+    citationLabel:version === 5 ? 'formatted' : 'title',citationStyle:version === 5 ? 'american-chemical-society' : '',
+  }));
+  const expected = fixture.store.snapshot();
+  const legacy = await validManifestAndDatabase(fixture,fixture.objectHash,fixture.objectBytes);
+  const database = new BetterSqlite3(legacy.databasePath);
+  database.exec('ALTER TABLE preferences DROP COLUMN material');
+  database.exec('DROP TABLE library_state');
+  if (version === 4) {
+    database.exec('ALTER TABLE preferences DROP COLUMN citation_label');
+    database.exec('ALTER TABLE preferences DROP COLUMN citation_style');
+  }
+  database.pragma(`user_version = ${version}`);
+  assert.equal(database.pragma('user_version',{simple:true}),version);
+  const columns = database.prepare('PRAGMA table_info(preferences)').all().map(c=>c.name);
+  assert.equal(columns.includes('material'),false);
+  assert.equal(columns.includes('citation_style'),version === 5);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='library_state'").get().count,0);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM experiment_citations').get().count,1);
+  database.close();
+  // Encrypt these legacy bytes directly; opening them through LibraryStore here
+  // would migrate them before the incoming-archive path could be exercised.
+  const bytes = fs.readFileSync(legacy.databasePath);
+  const manifest = {...legacy.manifest,schemaVersion:version,database:{...legacy.manifest.database,size:bytes.length,sha256:hash(bytes)}};
+  const source = await craftedBackup(fixture,`legacy-v${version}.labmatebackup`,[
+    {name:'manifest.json',data:JSON.stringify(manifest)},{name:'library.sqlite',data:bytes},
+    {name:`objects/${fixture.objectHash}`,data:fixture.objectBytes},
+  ],{schemaVersion:version});
+  assert.equal(readEnvelope(source).header.schemaVersion,version);
+  value(fixture.store.dispatch('preferences.update',{palette:'rose',material:'glass',citationLabel:'title',citationStyle:''}));
+  value(fixture.store.dispatch('records.updateRun',{id:fixture.run.id,expectedRevision:fixture.store.snapshot().runs[0].revision,changes:{title:'Current library replaced by legacy archive'}}));
+  const restored = await serviceFor(fixture).restore({source,password:'correct horse',jobId:`legacy-v${version}-restore`});
+  assert.deepEqual(restored,{...expected,libraryGeneration:restored.libraryGeneration,preferences:{...expected.preferences,material:'solid'}});
+  assert.equal(fixture.store.db.pragma('user_version',{simple:true}),6);
+  assert.equal(fixture.store.db.pragma('integrity_check',{simple:true}),'ok');
+  assert.deepEqual(fixture.store.db.pragma('foreign_key_check'),[]);
+  assert.ok(fixture.store.db.prepare('SELECT change_token FROM library_state WHERE id=1').get().change_token);
+  assert.deepEqual(fs.readFileSync(path.join(fixture.root,'objects',fixture.objectHash)),fixture.objectBytes);
+  fixture.store.close();fixture.store.reopen();
+  assert.deepEqual(fixture.store.snapshot(),{...restored,libraryGeneration:fixture.store.libraryGeneration});
+});
+
+test('schema 6 Midnight Purple survives an encrypted backup and restore', async t => {
   const fixture = setup(t);
   value(fixture.store.dispatch('preferences.update', {appearance: 100, palette: 'midnight'}));
   const expected = fixture.store.snapshot();
