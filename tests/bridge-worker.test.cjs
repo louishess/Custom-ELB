@@ -180,7 +180,7 @@ test('restore flushes before its picker and accepts the native .labmatebackup ex
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('daily backup catches up once when due and stays idle after a same-day success', async () => {
+test('scheduled backup captures when no cataloged local checkpoint exists', async () => {
   const secureStorage = {
     isEncryptionAvailable: () => true,
     encryptString: value => Buffer.from(`encrypted:${value}`),
@@ -212,10 +212,10 @@ test('daily backup catches up once when due and stays idle after a same-day succ
   dueRuntime.startDailyBackup();
   await new Promise(resolve => setImmediate(resolve));
   dueRuntime.stopDailyBackup();
-  assert.equal(dueCalls.length, 1);
+  assert.equal(dueCalls.filter(c=>c.method==='backups.run').length, 1);
   assert.equal(dueCalls[0].method, 'backups.run');
   assert.equal(typeof dueCalls[0].payload.password, 'string');
-  assert.equal(typeof dueCalls[0].payload.destination, 'string');
+  assert.equal(dueCalls[0].payload.destination, null);
   fs.rmSync(dueRoot, { recursive: true, force: true });
 
   const currentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'labmate-daily-current-'));
@@ -226,7 +226,7 @@ test('daily backup catches up once when due and stays idle after a same-day succ
   currentRuntime.startDailyBackup();
   await new Promise(resolve => setImmediate(resolve));
   currentRuntime.stopDailyBackup();
-  assert.equal(currentCalls.length, 0);
+  assert.equal(currentCalls.filter(c=>c[0]==='backups.run').length, 1);
   fs.rmSync(currentRoot, { recursive: true, force: true });
 });
 
@@ -388,7 +388,7 @@ test('real worker child opens an isolated library through the raw worker transpo
   try {
     const snapshot = await request('child-snapshot', 'records.snapshot', undefined);
     assert.equal(snapshot.result.ok, true);
-    assert.equal(snapshot.result.value.schemaVersion, 5);
+    assert.equal(snapshot.result.value.schemaVersion, 6);
     const shutdown = await request('child-shutdown', '__shutdown', undefined);
     assert.equal(shutdown.result.ok, true);
   } finally {

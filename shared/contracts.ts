@@ -1,4 +1,4 @@
-/** Version 1 desktop contract. No filesystem paths or secrets in library snapshots. */
+/** Version 2 desktop contract. No filesystem paths or secrets in library snapshots. */
 export type SectionId = 'information' | 'method' | 'notes' | 'data';
 export type Status = 'todo' | 'progress' | 'complete';
 export type DocNode = { type: string; text?: string; attrs?: Record<string, unknown>; marks?: {type: string; attrs?: Record<string, unknown>}[]; content?: DocNode[] };
@@ -10,7 +10,7 @@ export interface AttachmentRecord { id: string; runId: string; name: string; mim
 export interface SchemeRecord { id: string; notebookId: string; name: string; description: string; runIds: string[]; revision: number }
 export type PaletteId = 'sage' | 'ocean' | 'lavender' | 'terracotta' | 'rose' | 'graphite' | 'midnight';
 export type CitationStyle = 'american-chemical-society' | 'apa' | 'chicago-author-date' | 'modern-language-association' | 'harvard-cite-them-right' | 'nature' | 'vancouver' | 'ieee';
-export interface Preferences { appearance: number; palette: PaletteId; layout: 'continuous' | 'tabs'; directoryView: 'grid' | 'list'; sort: string; citationLabel: 'title'|'formatted'; citationStyle: CitationStyle|'' }
+export interface Preferences { material: 'solid' | 'glass'; appearance: number; palette: PaletteId; layout: 'continuous' | 'tabs'; directoryView: 'grid' | 'list'; sort: string; citationLabel: 'title'|'formatted'; citationStyle: CitationStyle|'' }
 export interface CitationIdentity { sourceInstance: string; libraryType: 'user'|'group'; libraryId: string; itemKey: string }
 export interface CitationBibliography { version: 1; itemType: string; title: string; creators: {name: string; role: string}[]; date: string; publication: string; volume: string; issue: string; pages: string; doi: string; url: string; libraryLabel: string; fetchedAt: string; sourceVersion: number|null; formattedCitation?: {text: string; style: CitationStyle; fetchedAt: string} }
 export interface ZoteroItem extends CitationIdentity { snapshot: CitationBibliography }
@@ -21,15 +21,20 @@ export interface ZoteroCollection { key: string; name: string; parentKey: string
 export interface ZoteroPage<T> { items: T[]; nextStart: number|null; total: number|null }
 export interface CitationTarget { experimentId: string; expectedRevision: number; libraryGeneration: string }
 export interface ZoteroQuery { generation: string; libraryType: 'user'|'group'; libraryId: string; start: number }
-export interface LibrarySnapshot { schemaVersion: number; libraryGeneration: string; citations: CitationRecord[]; legacyCitationCount: number; notebooks: NotebookRecord[]; experiments: ExperimentRecord[]; runs: RunRecord[]; attachments: AttachmentRecord[]; schemes: SchemeRecord[]; preferences: Preferences }
-export interface BackupStatus { configured: boolean; destinationLabel?: string; destinationAvailable?: boolean; lastBackupAt?: string; lastAttemptAt?: string; lastFailure?: {at: string; message: string}; progress?: JobEvent; message?: string; running?: boolean }
+export interface LibrarySnapshot { schemaVersion: number; libraryGeneration: string; citations: CitationRecord[]; legacyCitationCount: number; notebooks: NotebookRecord[]; experiments: ExperimentRecord[]; runs: RunRecord[]; attachments: AttachmentRecord[]; schemes: SchemeRecord[]; preferences: Preferences; recoveryWarnings?: string[] }
+export interface MutationUpdate extends LibrarySnapshot { kind: 'mutation'; replaceIds: Record<'notebooks'|'experiments'|'runs'|'attachments'|'schemes'|'citations', string[]> }
+export interface BackupVerification { at: string; name: string; schemaVersion: number; verified: boolean; records: { notebooks: number; experiments: number; runs: number; attachments: number; citations: number } }
+export interface BackupStatus { capturedRevision?: string; lastBoxCaptureAt?: string; protectedRevision?: boolean; overdue?: boolean; capacity?: {estimatedBytes: number; availableBytes: number; estimatedHistoryBytes: number; issue?: string}; lastLocalBackupAt?: string; lastBoxCopyAt?: string; pendingDeliveryCount?: number; retainedCount?: number; cloudStatus?: 'not-verified'; lastRehearsal?: Pick<BackupVerification, 'at' | 'name' | 'records'>; configured: boolean; destinationLabel?: string; destinationAvailable?: boolean; lastBackupAt?: string; lastAttemptAt?: string; lastFailure?: {at: string; message: string}; progress?: JobEvent; message?: string; running?: boolean }
 export interface DictationCapabilities { available: boolean; reason?: string; locales: {id: string; name: string; installed: boolean}[] }
 export interface DictationEvent { sessionId: string; state: 'preparing' | 'ready' | 'recording' | 'stopped' | 'cancelled' | 'error'; transcript?: string; final?: boolean; message?: string }
-export interface JobEvent { jobId: string; operation: string; phase: string; completed?: number; total?: number; message?: string }
+export interface JobEvent { state?: 'running'|'committing'|'complete'|'failed'|'cancelled'; cancellable?: boolean; jobId: string; operation: string; phase: string; completed?: number; total?: number; message?: string }
 export interface Preview { kind: 'image' | 'pdf' | 'spreadsheet' | 'unsupported'; mime?: string; bytes?: Uint8Array; sheets?: {name: string; rows: string[][]}[]; message?: string }
-export interface ExportRequest { scope: 'entry' | 'selected' | 'notebook'; notebookId: string; runIds: string[]; format: 'txt' | 'md' | 'html' | 'rtf' | 'docx'; order: string; schemeId?: string; sections: SectionId[]; data: 'none' | 'captions' | 'previews'; jobId: string }
+export type ExportOrder = import('./ordering.cjs').ExportOrder;
+export interface ExportRequest { scope: 'entry' | 'selected' | 'notebook'; notebookId: string; runIds: string[]; format: 'txt' | 'md' | 'html' | 'rtf' | 'docx'; order: ExportOrder; schemeId?: string; sections: SectionId[]; data: 'none' | 'captions' | 'previews'; jobId: string }
 type Op<I, O = LibrarySnapshot> = { input: I; output: O };
+export interface AppearanceStatus { material: 'solid'|'glass'; reducedTransparency: boolean; highContrast: boolean }
 export interface Operations {
+ 'appearance.status': Op<undefined, AppearanceStatus>;
  'zotero.status': Op<undefined, ZoteroStatus>;
  'zotero.connect': Op<undefined, ZoteroStatus>;
  'zotero.disconnect': Op<undefined, ZoteroStatus>;
@@ -70,6 +75,7 @@ export interface Operations {
  'backups.changeDestination': Op<undefined, BackupStatus>;
  'backups.revealDestination': Op<undefined, {opened: boolean}>;
  'backups.run': Op<{jobId: string}, BackupStatus>;
+ 'backups.verify': Op<{password: string; jobId: string}, BackupVerification>;
  'backups.restore': Op<{password: string; jobId: string}>;
  'jobs.cancel': Op<{jobId: string}, {cancelled: boolean}>;
  'dictation.capabilities': Op<undefined, DictationCapabilities>;
@@ -83,9 +89,11 @@ type OperationFunction<K extends keyof Operations> = Operations[K]['input'] exte
  ? (input?: undefined) => Promise<Result<Operations[K]['output']>>
  : (input: Operations[K]['input']) => Promise<Result<Operations[K]['output']>>;
 type Namespace<N extends string> = { [K in keyof Operations as K extends `${N}.${infer M}` ? M : never]: OperationFunction<K> };
-export type LabmateAPI = { [N in 'records'|'documents'|'yield'|'schemes'|'preferences'|'trash'|'attachments'|'exports'|'backups'|'jobs'|'dictation'|'zotero'|'citations']: Namespace<N> } & {
+export type LabmateAPI = { [N in 'appearance'|'records'|'documents'|'yield'|'schemes'|'preferences'|'trash'|'attachments'|'exports'|'backups'|'jobs'|'dictation'|'zotero'|'citations']: Namespace<N> } & {
+ onAppearance: (listener: (event: AppearanceStatus) => void) => () => void;
  onDictation: (listener: (event: DictationEvent) => void) => () => void;
  onProgress: (listener: (event: JobEvent) => void) => () => void;
+ onBeforeCheckpoint: (listener: () => Promise<boolean>) => () => void;
  onBeforeClose: (listener: () => Promise<boolean>) => () => void;
 };
 declare global { interface Window { labmate?: LabmateAPI } }

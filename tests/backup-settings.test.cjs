@@ -76,6 +76,7 @@ test('unavailable destination preserves setup and failed automatic attempts acro
   const f = fixture(t);
   assert.equal((await f.invoke('configure', { password: 'pw' })).ok, true);
   fs.rmSync(f.destination, { recursive: true });
+  f.runtime.worker = {request: async (method,payload) => { if(method==='backups.inspect') return {ok:true,value:{}}; assert.equal(payload.destination,null); return {ok:true,value:{lastLocalBackupAt:new Date().toISOString(),pendingDeliveryCount:1,lastFailure:{message:'Box folder unavailable'}}}; }};
   f.runtime.startDailyBackup();
   await new Promise(resolve => setImmediate(resolve));
   f.runtime.stopDailyBackup();
@@ -130,6 +131,7 @@ test('scheduled progress is visible and destination changes wait for active back
   let started;
   const ready = new Promise(resolve => { started = resolve; });
   f.runtime.worker = { request: async (_method, payload) => {
+    if (_method === 'backups.inspect') return {ok:true,value:{}};
     workerClient.handleMessage({ event: 'progress', value: { jobId: payload.jobId, operation: 'backup', phase: 'copy', completed: 1, total: 2, message: 'Verifying local destination' } });
     started();
     return new Promise(resolve => { finish = resolve; });

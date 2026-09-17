@@ -1,3 +1,4 @@
+import { desktopAPI } from './desktop-api';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUpRight, CheckCircle2, Circle, CircleDashed, GitBranch } from 'lucide-react';
 import { entryCode, statusOptions } from './fixtures';
@@ -36,13 +37,13 @@ export default function Tracker({ snapshot, mode, onSnapshot, onError, onBeforeO
       return;
     }
     if (!(await onBeforeOperation())) return;
-    const latest = await window.labmate?.records.snapshot(undefined);
+    const latest = await desktopAPI?.records.snapshot(undefined);
     if (!latest) { onError('The local library bridge is unavailable.'); return; }
     if (!latest.ok) { onError(latest.error.message); return; }
     const freshRun = latest.value.runs.find(item => item.id === runId && !item.trashedAt);
     if (!freshRun) { onError('This run is no longer available. Reload the tracker and try again.'); return; }
     statusFocus.current = runId;
-    const result = await window.labmate?.records.updateRun({ id: freshRun.id, expectedRevision: freshRun.revision, changes: { status } });
+    const result = await desktopAPI?.records.updateRun({ id: freshRun.id, expectedRevision: freshRun.revision, changes: { status } });
     if (!result) { onError('The local library bridge is unavailable.'); return; }
     if (result.ok) onSnapshot(result.value); else onError(result.error.message);
   };

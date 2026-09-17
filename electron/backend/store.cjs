@@ -23,7 +23,7 @@ const SECTION_IDS = ['information', 'method', 'notes', 'data'];
 const COLORS = new Set(['sage', 'blue', 'clay']);
 const STATUSES = new Set(['todo', 'progress', 'complete']);
 const ATTACHMENT_KINDS = new Set(['image', 'pdf', 'spreadsheet', 'scientific', 'file']);
-const PREFERENCE_KEYS = new Set(['appearance', 'palette', 'layout', 'directoryView', 'sort', 'citationLabel', 'citationStyle']);
+const PREFERENCE_KEYS = new Set(['appearance', 'palette', 'layout', 'directoryView', 'sort', 'citationLabel', 'citationStyle', 'material']);
 const LAYOUTS = new Set(['continuous', 'tabs']);
 const DIRECTORY_VIEWS = new Set(['grid', 'list']);
 const DEFAULT_PREFERENCES = Object.freeze({
@@ -34,6 +34,7 @@ const DEFAULT_PREFERENCES = Object.freeze({
   sort: 'newest',
   citationLabel: 'title',
   citationStyle: '',
+  material: 'solid',
 });
 
 const EMPTY_DOCUMENT = Object.freeze({
@@ -307,6 +308,10 @@ function validatePreferencesChange(changes) {
     if (changes.citationStyle !== '' && !citationData.styleSchema.safeParse(changes.citationStyle).success) throw new StoreError('VALIDATION', 'Unknown citation style.');
     result.citationStyle = changes.citationStyle;
   }
+  if (Object.prototype.hasOwnProperty.call(changes, 'material')) {
+    if (!['solid', 'glass'].includes(changes.material)) throw new StoreError('VALIDATION', 'Unknown window material.');
+    result.material = changes.material;
+  }
   if (Object.prototype.hasOwnProperty.call(changes, 'sort')) result.sort = requireText(changes.sort, 'sort');
   return result;
 }
@@ -442,6 +447,8 @@ const SCHEMA_SQL = [
     key TEXT PRIMARY KEY,
     next_number INTEGER NOT NULL CHECK (next_number >= 1)
   )`,
+  `CREATE TABLE IF NOT EXISTS library_state (id INTEGER PRIMARY KEY CHECK(id=1), change_token TEXT NOT NULL)`,
+  `INSERT OR IGNORE INTO library_state(id, change_token) VALUES(1, lower(hex(randomblob(16))))`,
   `CREATE TABLE IF NOT EXISTS preferences (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     appearance INTEGER NOT NULL CHECK (appearance BETWEEN 0 AND 100),
@@ -450,6 +457,7 @@ const SCHEMA_SQL = [
     sort TEXT NOT NULL,
     citation_label TEXT NOT NULL DEFAULT 'title' CHECK (citation_label IN ('title','formatted')),
     citation_style TEXT NOT NULL DEFAULT '',
+    material TEXT NOT NULL DEFAULT 'solid' CHECK(material IN ('solid','glass')),
     palette TEXT NOT NULL DEFAULT 'sage' CHECK (palette IN ('sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite', 'midnight'))
   )`,
 ];
@@ -457,7 +465,7 @@ const SCHEMA_SQL = [
 const REQUIRED_COLUMNS = columnsForVersion(SCHEMA_VERSION);
 
 class LibraryStore {
-  constructor(root) {
+  constructor(root, options = {}) {
     if (typeof root !== 'string' || root.trim().length === 0) {
       throw new StoreError('VALIDATION', 'Library root must be a non-empty path.');
     }
@@ -467,9 +475,11 @@ class LibraryStore {
     this.root = path.resolve(root);
     this.databasePath = path.join(this.root, DATABASE_NAME);
     this.backupLocks = 0;
+    this.mutationUpdates = !!options.mutationUpdates;
     this.db = null;
     this._closed = true;
     this._backupActive = false;
+    if (options.deferOpen) return;
     // Restore recovery must happen before SQLite opens and before any generic
     // staging cleanup can remove a candidate left by an interrupted swap.
     try {
@@ -550,6 +560,8 @@ class LibraryStore {
             database.exec("ALTER TABLE preferences ADD COLUMN citation_label TEXT NOT NULL DEFAULT 'title' CHECK (citation_label IN ('title','formatted'))");
             database.exec("ALTER TABLE preferences ADD COLUMN citation_style TEXT NOT NULL DEFAULT ''");
           }
+          for (const sql of SCHEMA_SQL.filter(sql => sql.includes('library_state'))) database.exec(sql);
+          if (version >= 3 && !database.prepare('PRAGMA table_info(preferences)').all().some(c => c.name === 'material')) database.exec("ALTER TABLE preferences ADD COLUMN material TEXT NOT NULL DEFAULT 'solid' CHECK(material IN ('solid','glass'))");
           this._verifySchema(database);
           database.pragma(`user_version = ${SCHEMA_VERSION}`);
         })();
@@ -559,11 +571,23 @@ class LibraryStore {
       this.libraryGeneration = crypto.randomUUID();
       this.db = database;
       this._closed = false;
+      if (this.mutationUpdates) this._installChangeTracking();
     } catch (error) {
       try { if (database && database.open) database.close(); } catch {}
       this.db = null;
       this._closed = true;
       throw asStoreError(error);
+    }
+  }
+
+  _installChangeTracking() {
+    this.db.exec('CREATE TEMP TABLE mutation_changes(entity TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(entity,id))');
+    const tables = {notebooks:['notebooks','id'], experiments:['experiments','id'], runs:['runs','id'], attachments:['attachments','id'], schemes:['schemes','id'], experiment_citations:['citations','id'], documents:['runs','run_id'], scheme_members:['schemes','scheme_id']};
+    for (const [table, [entity, key]] of Object.entries(tables)) {
+      for (const event of ['INSERT','UPDATE','DELETE']) {
+        const row = event === 'DELETE' ? 'OLD' : 'NEW';
+        this.db.exec(`CREATE TEMP TRIGGER changes_${table}_${event} AFTER ${event} ON main.${table} BEGIN INSERT OR IGNORE INTO mutation_changes VALUES('${entity}',${row}.${key}); END`);
+      }
     }
   }
 
@@ -582,6 +606,10 @@ class LibraryStore {
     const preferences = database.prepare('SELECT COUNT(*) AS count FROM preferences WHERE id = 1').get();
     if (Number(preferences.count) !== 1) {
       throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
+    }
+    if (version >= 6) {
+      const material = database.prepare('SELECT material FROM preferences WHERE id=1').get()?.material;
+      if (!['solid','glass'].includes(material) || !database.prepare('SELECT change_token FROM library_state WHERE id=1').get()?.change_token) throw new StoreError('CORRUPT_BACKUP', 'Library protection preferences are invalid.');
     }
     if (version >= 5) {
       const labels = database.prepare('SELECT citation_label, citation_style FROM preferences WHERE id=1').get();
@@ -624,6 +652,7 @@ class LibraryStore {
 
   _cleanStaging() {
     const staging = path.join(this.root, 'staging');
+    if (fs.existsSync(path.join(staging, 'restore-journal.json'))) return;
     let stats;
     try {
       stats = fs.lstatSync(staging);
@@ -694,9 +723,9 @@ class LibraryStore {
     try {
       this._assertOpen();
       this._assertMutationAllowed();
-      const extra = this.db.transaction(operation)();
+      const extra = this.db.transaction(() => { if (this.mutationUpdates) this.db.exec('DELETE FROM mutation_changes'); const result = operation(); this.db.prepare('UPDATE library_state SET change_token=? WHERE id=1').run(crypto.randomUUID()); return result; })();
       if (extra && Array.isArray(extra.gcHashes)) this._garbageCollect(extra.gcHashes);
-      return this._snapshotUnsafe();
+      return this._snapshotUnsafe(this.mutationUpdates);
     } catch (error) {
       throw asStoreError(error);
     }
@@ -779,10 +808,11 @@ class LibraryStore {
   }
 
   _readDocuments(runId) {
+    return this._parseDocuments(this.db.prepare('SELECT section_id, document_schema_version, json FROM documents WHERE run_id = ?').all(runId));
+  }
+
+  _parseDocuments(rows) {
     const documents = {};
-    const rows = this.db.prepare(
-      'SELECT section_id, document_schema_version, json FROM documents WHERE run_id = ?',
-    ).all(runId);
     for (const row of rows) {
       if (!SECTION_IDS.includes(row.section_id)) throw new StoreError('CORRUPT_BACKUP', 'Run contains an unknown document section.');
       if (Number(row.document_schema_version) !== 1) {
@@ -800,9 +830,14 @@ class LibraryStore {
     return validateSectionDocuments(documents);
   }
 
-  _snapshotUnsafe() {
+  _snapshotUnsafe(delta = false) {
     this._assertOpen();
-    const notebooks = this.db.prepare(`SELECT * FROM notebooks ORDER BY created_at, id`).all().map(row => ({
+    const where = (entity, key = 'id') => delta ? ` WHERE ${key} IN (SELECT id FROM mutation_changes WHERE entity='${entity}')` : '';
+    const documentRows = this.db.prepare(`SELECT run_id, section_id, document_schema_version, json FROM documents${where('runs','run_id')}`).all();
+    const documents = new Map();
+    for (const row of documentRows) { if (!documents.has(row.run_id)) documents.set(row.run_id, []); documents.get(row.run_id).push(row); }
+
+    const notebooks = this.db.prepare(`SELECT * FROM notebooks${where('notebooks')} ORDER BY created_at, id`).all().map(row => ({
       id: row.id,
       name: row.name,
       description: row.description,
@@ -813,7 +848,7 @@ class LibraryStore {
       updatedAt: row.updated_at,
       trashedAt: row.trashed_at,
     }));
-    const experiments = this.db.prepare(`SELECT * FROM experiments ORDER BY created_at, id`).all().map(row => ({
+    const experiments = this.db.prepare(`SELECT * FROM experiments${where('experiments')} ORDER BY created_at, id`).all().map(row => ({
       id: row.id,
       notebookId: row.notebook_id,
       label: row.label,
@@ -823,7 +858,7 @@ class LibraryStore {
       updatedAt: row.updated_at,
       trashedAt: row.trashed_at,
     }));
-    const runRows = this.db.prepare(`SELECT * FROM runs ORDER BY created_at, id`).all();
+    const runRows = this.db.prepare(`SELECT * FROM runs${where('runs')} ORDER BY created_at, id`).all();
     const runs = runRows.map(row => ({
       id: row.id,
       notebookId: row.notebook_id,
@@ -835,13 +870,13 @@ class LibraryStore {
       date: row.date,
       author: row.author,
       status: row.status,
-      documents: this._readDocuments(row.id),
+      documents: this._parseDocuments(documents.get(row.id) || []),
       revision: Number(row.revision),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       trashedAt: row.trashed_at,
     }));
-    const attachments = this.db.prepare(`SELECT * FROM attachments ORDER BY created_at, id`).all().map(row => ({
+    const attachments = this.db.prepare(`SELECT * FROM attachments${where('attachments')} ORDER BY created_at, id`).all().map(row => ({
       id: row.id,
       runId: row.run_id,
       name: row.name,
@@ -852,8 +887,8 @@ class LibraryStore {
       kind: row.kind,
       createdAt: row.created_at,
     }));
-    const schemeRows = this.db.prepare(`SELECT * FROM schemes ORDER BY created_at, id`).all();
-    const memberRows = this.db.prepare(`SELECT scheme_id, run_id FROM scheme_members ORDER BY scheme_id, position`).all();
+    const schemeRows = this.db.prepare(`SELECT * FROM schemes${where('schemes')} ORDER BY created_at, id`).all();
+    const memberRows = this.db.prepare(`SELECT scheme_id, run_id FROM scheme_members${where('schemes','scheme_id')} ORDER BY scheme_id, position`).all();
     const members = new Map();
     for (const row of memberRows) {
       if (!members.has(row.scheme_id)) members.set(row.scheme_id, []);
@@ -867,12 +902,13 @@ class LibraryStore {
       runIds: members.get(row.id) || [],
       revision: Number(row.revision),
     }));
-    const preferenceRow = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort, citation_label, citation_style FROM preferences WHERE id = 1').get();
+    const preferenceRow = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort, citation_label, citation_style, material FROM preferences WHERE id = 1').get();
     if (!preferenceRow) throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
     return {
+      ...(delta ? {kind:'mutation', replaceIds: Object.fromEntries(['notebooks','experiments','runs','attachments','schemes','citations'].map(entity => [entity, this.db.prepare('SELECT id FROM mutation_changes WHERE entity=?').all(entity).map(r => r.id)]))} : {}),
       schemaVersion: SCHEMA_VERSION,
       libraryGeneration: this.libraryGeneration,
-      citations: this.db.prepare('SELECT * FROM experiment_citations ORDER BY created_at, id').all().map(row => ({
+      citations: this.db.prepare(`SELECT * FROM experiment_citations${where('citations')} ORDER BY created_at, id`).all().map(row => ({
         id: row.id, experimentId: row.experiment_id, sourceInstance: row.source_instance,
         libraryType: row.library_type, libraryId: row.library_id, itemKey: row.item_key,
         snapshot: citationData.validate(citationData.snapshotSchema, JSON.parse(row.snapshot_json)),
@@ -892,6 +928,7 @@ class LibraryStore {
         sort: preferenceRow.sort,
         citationLabel: preferenceRow.citation_label,
         citationStyle: preferenceRow.citation_style,
+        material: preferenceRow.material,
       },
     };
   }
@@ -1127,7 +1164,7 @@ class LibraryStore {
     const changes = validatePreferencesChange(payload);
     const keys = Object.keys(changes);
     if (keys.length === 0) throw new StoreError('VALIDATION', 'Preference changes are empty.');
-    const current = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort, citation_label, citation_style FROM preferences WHERE id=1').get();
+    const current = this.db.prepare('SELECT appearance, palette, layout, directory_view, sort, citation_label, citation_style, material FROM preferences WHERE id=1').get();
     if (!current) throw new StoreError('CORRUPT_BACKUP', 'Library preferences row is missing.');
     const next = {
       appearance: changes.appearance ?? Number(current.appearance),
@@ -1137,9 +1174,10 @@ class LibraryStore {
       sort: changes.sort ?? current.sort,
       citationLabel: changes.citationLabel ?? current.citation_label,
       citationStyle: changes.citationStyle ?? current.citation_style,
+      material: changes.material ?? current.material,
     };
-    this.db.prepare(`UPDATE preferences SET appearance=?, palette=?, layout=?, directory_view=?, sort=?, citation_label=?, citation_style=? WHERE id=1`).run(
-      next.appearance, next.palette, next.layout, next.directoryView, next.sort, next.citationLabel, next.citationStyle,
+    this.db.prepare(`UPDATE preferences SET appearance=?, palette=?, layout=?, directory_view=?, sort=?, citation_label=?, citation_style=?, material=? WHERE id=1`).run(
+      next.appearance, next.palette, next.layout, next.directoryView, next.sort, next.citationLabel, next.citationStyle, next.material,
     );
   }
 
@@ -1309,6 +1347,10 @@ class LibraryStore {
         }
       }
     }
+  }
+
+  addAttachments(records) {
+    return this._mutateRaw(() => { for (const record of records) this._addAttachment(record); });
   }
 
   addAttachment(record) {

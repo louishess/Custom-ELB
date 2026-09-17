@@ -195,6 +195,9 @@ export function applyAppearance(value: number, paletteId: AppearancePaletteId = 
   for (const [key, amount] of [['light', 0], ['middle', 50], ['dark', 100]] as const) {
     root.style.setProperty(`--appearance-${key}`, appearancePalette(amount, paletteId).canvas);
   }
+  const solid = appearancePalette(position, paletteId);
+  root.style.setProperty('--glass-tint', atLuminance(solid['surface-soft'], position <= 50 ? Math.max(.28, luminance(solid['surface-soft'])) : Math.min(.10, luminance(solid['surface-soft']))));
+  root.style.setProperty('--glass-ink', position <= 50 ? '#000000' : '#ffffff');
   root.dataset.appearance = String(position);
   root.dataset.palette = paletteId;
   // Native dropdowns and other OS controls expose only a light/dark scheme.

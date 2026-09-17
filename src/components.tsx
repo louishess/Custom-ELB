@@ -253,7 +253,7 @@ export function RichEntryEditor({ run, attachments = run.attachments ?? [], docu
         <div className="section-heading"><h2 id={`heading-${section.id}`}><span className="section-number">0{index + 1}</span>{section.name}</h2>
           {section.id === 'data' && <button className="button button-small" type="button" onClick={onAddAttachments} disabled={readOnly}><Plus size={14} /> Add files{readOnly && <Planned>Demo</Planned>}</button>}
         </div>
-        <RichSection id={section.id} document={documents[section.id]} onChange={document => handleChange(section.id, document)} onEditor={editor => handleEditor(section.id, editor)} onFocus={onFocusSection ?? (() => undefined)} readOnly={readOnly} resetToken={resetToken} />
+        <RichSection key={`${run.id}:${resetToken}:${section.id}`} id={section.id} document={documents[section.id]} onChange={document => handleChange(section.id, document)} onEditor={editor => handleEditor(section.id, editor)} onFocus={onFocusSection ?? (() => undefined)} readOnly={readOnly} resetToken={resetToken} />
         {section.id === 'data' && <>
           {attachments.length ? <div className="attachment-grid">{attachments.map(attachment => <AttachmentCard key={attachment.id} attachment={attachment} onOpen={() => onAttachment(attachment)} />)}</div> : <div className="empty-state"><ArrowDownToLine size={25} /><strong>No attachments yet</strong><span>Use Add files to keep supporting data with this run.</span></div>}
           <p className="caption">Files are managed inside the LabMate library.</p>

@@ -14,13 +14,16 @@ const resourcesRoot = path.join(appRoot, 'Contents', 'Resources');
 const asarPath = path.join(resourcesRoot, 'app.asar');
 const binaryPath = path.join(appRoot, 'Contents', 'MacOS', 'LabMate');
 const packageRequired = process.env.LABMATE_REQUIRE_PACKAGE === '1';
+const {identity,hash}=require('../scripts/release-identity.cjs');
 const expectedVersion = require(path.join(projectRoot, 'package.json')).version;
 
 function packageIsCurrent() {
   if (!fs.existsSync(asarPath)) return false;
   try {
     const packagedManifest = JSON.parse(extractFile(asarPath, 'package.json').toString('utf8'));
-    return packagedManifest.version === expectedVersion;
+    const release=JSON.parse(fs.readFileSync(path.join(resourcesRoot,'LabMate-release.json'),'utf8'));
+    const current=identity(projectRoot);
+    return packagedManifest.version === expectedVersion && release.qualifiedSource && release.commit === current.commit && release.sourceHash === current.sourceHash && Object.entries(current.runtimeFiles).every(([name,digest])=>hash(extractFile(asarPath,name))===digest);
   } catch {
     return false;
   }
@@ -32,6 +35,7 @@ function packageTest(name, fn) {
 }
 
 packageTest('packaged app contains backend processes, local PDF worker, and unpacked native SQLite', () => {
+  assert.equal(packageIsCurrent(),true,'Package must match the exact committed source and runtime files');
   assert.ok(fs.existsSync(asarPath), `missing packaged archive: ${asarPath}`);
   assert.ok(fs.existsSync(binaryPath), `missing packaged executable: ${binaryPath}`);
 
@@ -41,6 +45,8 @@ packageTest('packaged app contains backend processes, local PDF worker, and unpa
     'electron/backend/worker.cjs',
     'electron/backend/store.cjs',
     'electron/backend/backup.cjs',
+    'electron/backend/backup-worker.cjs',
+    'electron/backend/backup-manager.cjs',
     'electron/backend/files.cjs',
     'electron/backend/parser.cjs',
     'electron/backend/exports.cjs',

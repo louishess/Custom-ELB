@@ -30,32 +30,8 @@ export function isActiveRun(snapshot: LibrarySnapshot, run: RunRecord): boolean 
   return Boolean(notebook && experiment && !run.trashedAt && !notebook.trashedAt && !experiment.trashedAt);
 }
 
-function localeCompare(first: string, second: string, locale: string): number {
-  return first.localeCompare(second, locale, { sensitivity: 'base', numeric: true });
-}
-
-function stableTie(first: RunRecord, second: RunRecord, locale: string): number {
-  return localeCompare(first.id, second.id, locale);
-}
-
-/** Compare persisted runs with an ID tie-break so order is deterministic. */
-export function compareRuns(first: RunRecord, second: RunRecord, sort: string, locale = 'en-US'): number {
-  let result = 0;
-  switch (sort) {
-    case 'oldest': result = first.date.localeCompare(second.date); break;
-    case 'newest': result = second.date.localeCompare(first.date); break;
-    case 'title-az':
-    case 'az': result = localeCompare(first.title, second.title, locale); break;
-    case 'title-za':
-    case 'za': result = localeCompare(second.title, first.title, locale); break;
-    case 'label-az': result = localeCompare(first.label, second.label, locale); break;
-    case 'author-az': result = localeCompare(first.author, second.author, locale); break;
-    case 'number-asc': result = first.experimentNumber - second.experimentNumber || first.runNumber - second.runNumber; break;
-    case 'number-desc': result = second.experimentNumber - first.experimentNumber || second.runNumber - first.runNumber; break;
-    default: result = 0; break;
-  }
-  return result || stableTie(first, second, locale);
-}
+export { compareRuns } from '../shared/ordering.cjs';
+import { compareRuns } from '../shared/ordering.cjs';
 
 /** Map sort names used by early renderer builds to the current UI values. */
 export function normalizeSort(sort: string): string {
@@ -69,7 +45,7 @@ export function runsForNotebook(snapshot: LibrarySnapshot, notebookId: string, s
   const scheme = schemeId ? snapshot.schemes.find(candidate => candidate.id === schemeId && candidate.notebookId === notebookId) : undefined;
   if (!scheme) return [...active].sort((a, b) => compareRuns(a, b, sort));
   const order = new Map(scheme.runIds.map((id, index) => [id, index]));
-  return active.filter(run => order.has(run.id)).sort((a, b) => (order.get(a.id)! - order.get(b.id)!) || stableTie(a, b, 'en-US'));
+  return active.filter(run => order.has(run.id)).sort((a, b) => (order.get(a.id)! - order.get(b.id)!) || a.id.localeCompare(b.id));
 }
 
 export function todayLocalDate(now = new Date()): string {
@@ -91,7 +67,7 @@ export function activeTrash(snapshot: LibrarySnapshot): { kind: 'notebook' | 'ex
   for (const notebook of snapshot.notebooks.filter(item => item.trashedAt)) result.push({ kind: 'notebook', id: notebook.id, name: notebook.name });
   for (const experiment of snapshot.experiments.filter(item => item.trashedAt)) {
     const ancestor = notebooks.get(experiment.notebookId);
-    result.push({ kind: 'experiment', id: experiment.id, name: experiment.label, ancestorId: ancestor?.id, ancestorName: ancestor?.name });
+    result.push({ kind: 'experiment', id: experiment.id, name: experiment.label, ancestorId: ancestor?.trashedAt ? ancestor.id : undefined, ancestorName: ancestor?.trashedAt ? ancestor.name : undefined });
   }
   for (const run of snapshot.runs.filter(item => item.trashedAt)) {
     const experiment = experiments.get(run.experimentId);

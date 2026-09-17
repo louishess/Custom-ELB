@@ -57,7 +57,7 @@ const run = (id: string, notebookId: string, experimentId: string, label: string
 
 /**
  * Fictional content used only after the user explicitly chooses demonstration
- * mode. It is never sent through window.labmate and is kept separate from the
+ * mode. It is never sent through desktopAPI and is kept separate from the
  * real library snapshot.
  */
 export const demoSnapshot: LibrarySnapshot = {
@@ -92,7 +92,7 @@ export const demoSnapshot: LibrarySnapshot = {
     { id: 'demo-films', notebookId: 'demo-materials', name: 'Film reproducibility', description: 'Reference preparation followed by a repeat run.', runIds: ['demo-mat-3-1', 'demo-mat-3-2'], revision: 1 },
     { id: 'demo-calibration', notebookId: 'demo-analytical', name: 'Method development', description: 'The initial calibration entry in the method sequence.', runIds: ['demo-ana-10-1'], revision: 1 },
   ],
-  preferences: { appearance: 0, palette: 'sage', layout: 'continuous', directoryView: 'grid', sort: 'newest', citationLabel: 'title', citationStyle: '' },
+  preferences: { appearance: 0, palette: 'sage', layout: 'continuous', directoryView: 'grid', sort: 'newest', citationLabel: 'title', material: 'solid', citationStyle: '' },
 };
 
 export function cloneDemoSnapshot(): LibrarySnapshot {

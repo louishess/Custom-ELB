@@ -1,3 +1,4 @@
+import { desktopAPI } from './desktop-api';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, FileWarning, LoaderCircle } from 'lucide-react';
 import { AnnotationMode, GlobalWorkerOptions, getDocument, type PDFDocumentLoadingTask, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
@@ -211,7 +212,7 @@ export default function AttachmentPreview({ attachmentId }: { attachmentId: stri
   const [state, setState] = useState<PreviewState>({ status: 'loading' });
   useEffect(() => {
     let active = true;
-    const api = window.labmate;
+    const api = desktopAPI;
     const jobId = createJobId();
     if (!api) {
       setState({ status: 'error', message: 'Attachment previews are unavailable until the desktop bridge is connected.' });

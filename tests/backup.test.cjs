@@ -410,7 +410,7 @@ test('rolls back the same open store after a reopen failure and retains rollback
   assert.equal(fs.readdirSync(path.join(fixture.root, 'rollback')).length > 0, true);
 });
 
-test('cancellation during the switch rolls back with an open store and cleans staging', async t => {
+test('cancellation after switching starts completes the committed restore', async t => {
   const fixture = setup(t);
   const initialService = serviceFor(fixture);
   const created = await initialService.create({ password: 'correct horse' });
@@ -427,11 +427,8 @@ test('cancellation during the switch rolls back with an open store and cleans st
       if (phase === 'candidate-objects-moved') controller.abort();
     },
   });
-  await assert.rejects(
-    () => service.restore({ password: 'correct horse', source: backup }, { signal: controller.signal }),
-    error => error.code === 'CANCELLED',
-  );
-  assert.equal(fixture.store.snapshot().runs[0].title, 'Current after cancellation');
+  await service.restore({ password: 'correct horse', source: backup }, { signal: controller.signal });
+  assert.equal(fixture.store.snapshot().runs[0].title, 'Before restore');
   assert.equal(fixture.store.backupLocks, 0);
   assert.deepEqual(fs.readdirSync(path.join(fixture.root, 'staging')), []);
 });
@@ -495,7 +492,7 @@ test('authenticated schema 1 backup restores into schema 5 and migrates its pale
   ], {schemaVersion: 1});
   value(fixture.store.dispatch('preferences.update', {palette: 'rose'}));
   const snapshot = await service.restore({source, password: 'correct horse', jobId: 'legacy-restore'});
-  assert.equal(snapshot.schemaVersion, 5);
+  assert.equal(snapshot.schemaVersion, 6);
   assert.equal(snapshot.preferences.palette, 'sage');
   assert.equal(snapshot.runs.length, 1);
   assert.equal(fixture.store.db.pragma('integrity_check', {simple: true}), 'ok');
@@ -525,7 +522,7 @@ test('authenticated schema 2 backup retains all preferences and records through 
   const snapshot = await serviceFor(fixture).restore({source, password: 'correct horse', jobId: 'legacy-v2-restore'});
   assert.notEqual(snapshot.libraryGeneration, before.libraryGeneration);
   assert.deepEqual(snapshot, {...before, libraryGeneration: snapshot.libraryGeneration});
-  assert.equal(fixture.store.db.pragma('user_version', {simple: true}), 5);
+  assert.equal(fixture.store.db.pragma('user_version', {simple: true}), 6);
   assert.equal(fixture.store.db.pragma('integrity_check', {simple: true}), 'ok');
   value(fixture.store.dispatch('preferences.update', {palette: 'midnight'}));
 });
@@ -547,7 +544,7 @@ test('authenticated schema 3 archive without citation tables restores and migrat
   ], {schemaVersion:3});
   const restored = await serviceFor(fixture).restore({source,password:'correct horse'});
   assert.deepEqual(restored, {...before, libraryGeneration:restored.libraryGeneration});
-  assert.equal(restored.schemaVersion,5);
+  assert.equal(restored.schemaVersion,6);
 });
 
 test('schema 5 Midnight Purple survives an encrypted backup and restore', async t => {
@@ -557,7 +554,7 @@ test('schema 5 Midnight Purple survives an encrypted backup and restore', async 
   const service = serviceFor(fixture);
   const created = await service.create({password: 'correct horse'});
   const source = backupFile(fixture, created);
-  assert.equal(readEnvelope(source).header.schemaVersion, 5);
+  assert.equal(readEnvelope(source).header.schemaVersion, 6);
   value(fixture.store.dispatch('preferences.update', {appearance: 0, palette: 'sage'}));
   const restored = await service.restore({source, password: 'correct horse'});
   assert.deepEqual(restored, {...expected, libraryGeneration: restored.libraryGeneration});

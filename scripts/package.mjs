@@ -2,8 +2,16 @@ import { buildSpeechHelper } from './build-speech.mjs';
 import { packager } from '@electron/packager';
 import { rebuild } from '@electron/rebuild';
 import { execFileSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url);
+const {identity,assertClean}=require('./release-identity.cjs');
+if(process.env.LABMATE_ALLOW_DIRTY_PACKAGE!=='1') assertClean(process.cwd());
+mkdirSync('artifacts/release',{recursive:true});
+const release=identity(process.cwd());
+release.qualifiedSource=process.env.LABMATE_ALLOW_DIRTY_PACKAGE!=='1';
+writeFileSync('artifacts/release/LabMate-release.json',JSON.stringify(release,null,2)+'\n');
 
 const iconSource = 'scripts/icon.swift';
 const iconPath = 'artifacts/LabMate.icns';
@@ -27,7 +35,7 @@ const paths = await packager({
   icon: iconPath,
   platform: 'darwin',
   arch: 'arm64',
-  extraResource: [speechBundle],
+  extraResource: [speechBundle, 'artifacts/release/LabMate-release.json'],
   extendInfo: { NSMicrophoneUsageDescription: 'LabMate uses the microphone only when you start dictation. Speech is transcribed on this Mac and audio is not saved.' },
   out: 'out',
   overwrite: true,

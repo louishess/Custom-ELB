@@ -13,13 +13,13 @@ const V1_COLUMNS = {
   preferences: ['id', 'appearance', 'layout', 'directory_view', 'sort'],
 };
 
-const SCHEMA_VERSION = 5;
-const SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5]);
+const SCHEMA_VERSION = 6;
+const SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6]);
 const V2_PALETTES = Object.freeze(['sage', 'ocean', 'lavender', 'terracotta', 'rose', 'graphite']);
 const PALETTES = Object.freeze([...V2_PALETTES, 'midnight']);
 function columnsForVersion(version) {
   if (!SUPPORTED_SCHEMA_VERSIONS.includes(version)) throw new Error('Unsupported library schema');
-  return { ...V1_COLUMNS, ...(version >= 4 ? {experiment_citations: ['id', 'experiment_id', 'source_instance', 'library_type', 'library_id', 'item_key', 'snapshot_json', 'created_at', 'updated_at']} : {}), preferences: [...V1_COLUMNS.preferences, ...(version >= 2 ? ['palette'] : []), ...(version >= 5 ? ['citation_label', 'citation_style'] : [])] };
+  return { ...V1_COLUMNS, ...(version >= 6 ? {library_state: ['id', 'change_token']} : {}), ...(version >= 4 ? {experiment_citations: ['id', 'experiment_id', 'source_instance', 'library_type', 'library_id', 'item_key', 'snapshot_json', 'created_at', 'updated_at']} : {}), preferences: [...V1_COLUMNS.preferences, ...(version >= 2 ? ['palette'] : []), ...(version >= 5 ? ['citation_label', 'citation_style'] : []), ...(version >= 6 ? ['material'] : [])] };
 }
 function palettesForVersion(version) {
   if (!SUPPORTED_SCHEMA_VERSIONS.includes(version)) throw new Error('Unsupported library schema');

@@ -33,6 +33,7 @@ async function raw(method, input) {
 async function api(method, input) {
   const result = await raw(method, input);
   assert.equal(result.ok, true, `${method}: ${JSON.stringify(result)}`);
+  if (result.value?.kind === 'mutation') return (await raw('records.snapshot')).value;
   return result.value;
 }
 async function check(name, operation) { await operation(); checks.push(name); console.log(`PASS ${name}`); }
@@ -223,7 +224,7 @@ try {
     await page.getByRole('tab', { name: 'Notes', exact: true }).click();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByRole('tab', { name: 'Backups', exact: true }).click();
-    await page.getByLabel('Restore password', { exact: true }).fill('Disposable restore password');
+    await page.getByLabel('Backup password for testing or restoration', { exact: true }).fill('Disposable restore password');
     await application.evaluate(({ dialog }, selected) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
       dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });

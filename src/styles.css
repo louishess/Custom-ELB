@@ -562,3 +562,31 @@ mark { color: var(--ink-secondary); background: var(--surface-soft); padding: 2p
 
 .citation-label-settings { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
 .citation-label-settings .form-columns { margin: 16px 0 12px; }
+
+/* Translucency is confined to navigation and chrome. Data surfaces retain the
+   exact palette contrast calculations used in Solid mode. */
+:root[data-material='glass'], :root[data-material='glass'] body,
+:root[data-material='glass'] #root, :root[data-material='glass'] .app-shell { background: transparent; }
+:root[data-material='glass'] :is(.window-bar, .sidebar, .breadcrumb-bar, .entry-topbar, .section-navigation, .entry-status) {
+  background: color-mix(in srgb, var(--glass-tint) 88%, transparent);
+  --ink: var(--glass-ink); --ink-secondary: var(--glass-ink); --ink-muted: var(--glass-ink);
+  backdrop-filter: blur(24px) saturate(110%);
+  border-color: color-mix(in srgb, var(--line) 85%, transparent);
+}
+:root[data-material='glass'] .sidebar { background: color-mix(in srgb, var(--glass-tint) 88%, transparent); }
+:root[data-material='glass'] .modal { background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(28px); box-shadow: 0 16px 60px #0003, inset 0 1px 0 #ffffff35; }
+:root[data-material='glass'] :is(.modal-body, .entry-document, .entry-list-panel, .editor-content, .ProseMirror, input, textarea, select, table, .attachment-preview) { background: var(--surface); }
+.material-options { display: flex; gap: 20px; border: 0; padding: 4px 0 14px; }
+.material-options legend { padding: 0 0 10px; font-weight: 600; }
+.material-options label { display: flex; gap: 7px; align-items: center; }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root[data-material='glass'] :is(.window-bar, .sidebar, .breadcrumb-bar, .entry-topbar, .section-navigation, .entry-status, .modal) { background: var(--surface); backdrop-filter: none; }
+  :root[data-material='glass'] .sidebar { background: var(--sidebar); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+.backup-summary { display: block; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 9px; padding: 10px; margin-bottom: 12px; background: var(--surface); }
+.backup-summary strong, .backup-summary small { display: block; line-height: 1.5; }
+.backup-summary small { font-size: 10px; color: var(--ink-secondary); margin-top: 3px; }
+.state-screen .settings-backups { text-align: left; max-width: 660px; margin: 24px auto; }

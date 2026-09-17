@@ -1,12 +1,15 @@
+import { desktopAPI } from './desktop-api';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowDownUp, ArrowLeft, ArrowRight, BookOpen, CalendarDays, ChevronDown, ChevronRight, Columns3, FileText, FlaskConical, FolderOpen, GitBranch, Grid2X2, LayoutList, Library, List, Plus, Quote, Repeat2, Search, Settings, SlidersHorizontal, Trash2, Upload, UserRound, WifiOff, X } from 'lucide-react';
 import { CitationChips, EntrySections, SectionNavigation } from './components';
 import { cloneDemoSnapshot, entryCode, formatDate, sortOptions } from './fixtures';
-import { Panels } from './panels';
+import { BackupSettings, Panels } from './panels';
 import Tracker from './Tracker';
 import { applyAppearance } from './appearance';
+import { flushPanelDrafts, registerDraft } from './drafts';
 import { createAutosaveScheduler, type SaveState } from './autosave';
 import { cloneDocuments, isActiveRun, newJobId, normalizeSort, runsForNotebook } from './workflows';
+import type { BackupStatus } from '../shared/contracts';
 import type { Entry, EntryLayout, LibrarySnapshot, Panel, SectionId, SnapshotState } from './types';
 
 export default function App() {
@@ -29,14 +32,18 @@ export default function App() {
   const [resetToken, setResetToken] = useState(0);
   const [error, setError] = useState('');
   const [retryCount, setRetryCount] = useState(0);
-  const [progress, setProgress] = useState<{ jobId: string; operation: string; phase: string; completed?: number; total?: number; message?: string } | null>(null);
+  const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
+  const [progress, setProgress] = useState<{ cancellable?: boolean; jobId: string; operation: string; phase: string; completed?: number; total?: number; message?: string } | null>(null);
   const contentPane = useRef<HTMLDivElement>(null);
   const currentRunRef = useRef<Entry | null>(null);
   const expectedRevisionRef = useRef<number>(0);
   const schedulerRef = useRef<ReturnType<typeof createAutosaveScheduler<LibrarySnapshot['runs'][number]['documents']>> | null>(null);
   const initializedPrefs = useRef(false);
+  const appearanceScheduler = useRef<ReturnType<typeof createAutosaveScheduler<number>> | null>(null);
 
   const snapshot = state.status === 'ready' ? state.snapshot : null;
+  const activeGeneration = useRef(snapshot?.libraryGeneration);
+  activeGeneration.current = snapshot?.libraryGeneration;
   const notebook = snapshot?.notebooks.find(item => item.id === notebookId && !item.trashedAt);
   const baseEntry = snapshot?.runs.find(item => item.id === entryId && isActiveRun(snapshot, item)) ?? null;
   const entry = baseEntry ? { ...baseEntry, attachments: snapshot?.attachments.filter(attachment => attachment.runId === baseEntry.id) ?? [] } : null;
@@ -47,11 +54,18 @@ export default function App() {
   useLayoutEffect(() => { applyAppearance(appearance, snapshot?.preferences.palette ?? 'sage'); }, [appearance, snapshot?.preferences.palette]);
 
   useEffect(() => {
+    const apply = (value: {material: 'solid'|'glass'}) => { document.documentElement.dataset.material = value.material; };
+    if (mode === 'demo') { apply({material: snapshot?.preferences.material ?? 'solid'}); return; }
+    void desktopAPI?.appearance.status().then(result => { if (result.ok) apply(result.value); });
+    return desktopAPI?.onAppearance(apply);
+  }, [mode, snapshot?.preferences.material]);
+
+  useEffect(() => {
     if (mode === 'demo') return;
     let cancelled = false;
     const load = async () => {
       setState({ status: 'loading' });
-      const result = await window.labmate?.records.snapshot(undefined);
+      const result = await desktopAPI?.records.snapshot(undefined);
       if (cancelled) return;
       if (!result) { setState({ status: 'error', message: 'LabMate could not connect to its local library.' }); return; }
       if (result.ok) {
@@ -70,7 +84,28 @@ export default function App() {
   }, [mode, retryCount]);
 
   useEffect(() => {
-    const unsubscribe = window.labmate?.onProgress(event => setProgress(event.phase === 'complete' ? null : event));
+    if (mode === 'demo' || !snapshot) return;
+    const generation = snapshot.libraryGeneration;
+    const scheduler = createAutosaveScheduler<number>({idleMs: 250, maxMs: 1000, save: async value => {
+      const result = await desktopAPI?.preferences.update({appearance:value});
+      if (!result?.ok) throw new Error(result && !result.ok ? result.error.message : 'Could not save appearance.');
+      if (activeGeneration.current === generation) applySnapshot(result.value);
+    }, onState: value => { if (value === 'failed') setError('Appearance could not be saved. Retry before closing.'); }});
+    appearanceScheduler.current = scheduler;
+    const unregister = registerDraft(scheduler.flush);
+    return () => { unregister(); scheduler.dispose(); appearanceScheduler.current = null; };
+  }, [snapshot?.libraryGeneration, mode]);
+
+  useEffect(() => {
+    if (mode === 'demo') return;
+    let active = true;
+    const refresh = () => { void desktopAPI?.backups.status().then(result => { if (active && result.ok) setBackupStatus(result.value); }); };
+    refresh(); const timer = setInterval(refresh, 10000);
+    return () => { active = false; clearInterval(timer); };
+  }, [mode]);
+
+  useEffect(() => {
+    const unsubscribe = desktopAPI?.onProgress(event => setProgress(current => ['complete', 'failed', 'cancelled'].includes(event.phase) ? (current?.jobId === event.jobId ? null : current) : event));
     return unsubscribe;
   }, []);
 
@@ -78,9 +113,11 @@ export default function App() {
     if (mode === 'demo') return;
     const run = currentRunRef.current;
     if (!run) return;
-    const result = await window.labmate?.documents.save({ runId: run.id, expectedRevision: expectedRevisionRef.current, documents });
+    const libraryGeneration = snapshot?.libraryGeneration;
+    const result = await desktopAPI?.documents.save({ runId: run.id, expectedRevision: expectedRevisionRef.current, documents });
     if (!result) throw Object.assign(new Error('LabMate bridge unavailable.'), { code: 'UNAVAILABLE' });
     if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+    if (currentRunRef.current?.id !== run.id || activeGeneration.current !== libraryGeneration) return;
     const updated = result.value.runs.find(item => item.id === run.id);
     if (updated) { expectedRevisionRef.current = updated.revision; currentRunRef.current = updated; }
     setState({ status: 'ready', snapshot: result.value });
@@ -97,14 +134,12 @@ export default function App() {
     setSaveState('saved');
     schedulerRef.current = createAutosaveScheduler({ save: saveDocuments, onState: setSaveState });
     return () => { schedulerRef.current?.dispose(); schedulerRef.current = null; };
-  }, [entry?.id, mode]);
+  }, [entry?.id, snapshot?.libraryGeneration, mode]);
 
   useEffect(() => {
-    const unsubscribe = window.labmate?.onBeforeClose(async () => {
-      const scheduler = schedulerRef.current;
-      return scheduler ? scheduler.flush() : true;
-    });
-    return unsubscribe;
+    const unsubscribe = desktopAPI?.onBeforeClose(flushDraft);
+    const checkpoint = desktopAPI?.onBeforeCheckpoint(flushDraft);
+    return () => { unsubscribe?.(); checkpoint?.(); };
   }, []);
 
   function applySnapshot(next: LibrarySnapshot) {
@@ -122,14 +157,14 @@ export default function App() {
 
   async function flushDraft(): Promise<boolean> {
     const scheduler = schedulerRef.current;
-    if (!scheduler) return true;
-    const ok = await scheduler.flush();
-    return ok;
+    if (scheduler && !(await scheduler.flush())) return false;
+    return flushPanelDrafts();
   }
 
   function replaceRestoredLibrary(next: LibrarySnapshot) {
     // A restore can retain record IDs while replacing their documents. Drop
     // all old drafts/editor instances rather than treating it as a mutation.
+    activeGeneration.current = next.libraryGeneration;
     schedulerRef.current?.dispose();
     schedulerRef.current = null;
     currentRunRef.current = null;
@@ -144,12 +179,12 @@ export default function App() {
     setLayout(next.preferences.layout);
     setDirectoryView(next.preferences.directoryView);
     setSort(normalizeSort(next.preferences.sort));
-    setProgress(null); setError('');
+    setProgress(null); setError(next.recoveryWarnings?.join(' ') ?? '');
   }
 
   async function refreshCurrentRun(): Promise<Entry | null> {
     if (mode === 'demo' || !entryId) return null;
-    const result = await window.labmate?.records.snapshot(undefined);
+    const result = await desktopAPI?.records.snapshot(undefined);
     if (!result) { setError('The local library bridge is unavailable.'); return null; }
     if (!result.ok) { setError(result.error.message); return null; }
     const fresh = result.value.runs.find(run => run.id === entryId && isActiveRun(result.value, run));
@@ -196,7 +231,7 @@ export default function App() {
       applySnapshot({ ...snapshot, preferences: { ...snapshot.preferences, ...changes } });
       return;
     }
-    const result = await window.labmate?.preferences.update(changes);
+    const result = await desktopAPI?.preferences.update(changes);
     if (!result) { setError('The local library bridge is unavailable.'); return; }
     if (result.ok) applySnapshot(result.value); else setError(result.error.message);
   }
@@ -204,7 +239,7 @@ export default function App() {
   async function importAttachments() {
     if (!entry || mode === 'demo' || !(await flushDraft())) return;
     const jobId = newJobId('attachment-import');
-    const result = await window.labmate?.attachments.import({ runId: entry.id, jobId });
+    const result = await desktopAPI?.attachments.import({ runId: entry.id, jobId });
     if (!result) { setError('The local library bridge is unavailable.'); return; }
     if (result.ok) applySnapshot(result.value); else if (result.error.code !== 'CANCELLED') setError(result.error.message);
     setProgress(null);
@@ -213,12 +248,12 @@ export default function App() {
   async function cancelProgress() {
     const active = progress;
     if (!active || mode === 'demo') return;
-    const result = await window.labmate?.jobs.cancel({ jobId: active.jobId });
+    const result = await desktopAPI?.jobs.cancel({ jobId: active.jobId });
     if (!result || !result.ok) {
       setError(result && !result.ok ? result.error.message : 'The local library bridge is unavailable.');
       return;
     }
-    setProgress(null);
+    if (result.value.cancelled) setProgress(null);
   }
 
   async function returnToLibrary() {
@@ -237,7 +272,7 @@ export default function App() {
 
   async function moveToTrash(kind: 'notebook' | 'experiment' | 'run', id: string) {
     if (mode === 'demo' || !(await flushDraft())) return;
-    const latest = await window.labmate?.records.snapshot(undefined);
+    const latest = await desktopAPI?.records.snapshot(undefined);
     if (!latest) { setError('The local library bridge is unavailable.'); return; }
     if (!latest.ok) { setError(latest.error.message); return; }
     const record = kind === 'notebook'
@@ -252,7 +287,7 @@ export default function App() {
         ? `Move experiment “${'label' in record ? record.label : id}” to Trash? Its runs will be hidden until the experiment is restored.`
         : `Move run “${'title' in record ? record.title : id}” to Trash? You can restore it from Settings › Trash.`;
     if (!window.confirm(label)) return;
-    const result = await window.labmate?.trash.move({ kind, id, expectedRevision: record.revision });
+    const result = await desktopAPI?.trash.move({ kind, id, expectedRevision: record.revision });
     if (!result) { setError('The local library bridge is unavailable.'); return; }
     if (!result.ok) { setError(result.error.message); return; }
     applySnapshot(result.value);
@@ -303,25 +338,25 @@ export default function App() {
         <div className="sidebar-section organization-nav"><span className="sidebar-label">Organization</span><button className={`nav-item ${page === 'tracker' ? 'selected' : ''}`} onClick={() => void openTracker()} aria-current={page === 'tracker' ? 'page' : undefined}><Columns3 size={18} /><span>Experiment tracker</span></button></div>
         <div className="sidebar-section notebook-nav"><div className="sidebar-section-heading"><span className="sidebar-label">Notebooks</span><button className="icon-button" aria-label="New notebook" onClick={() => setPanel({ kind: 'new-notebook' })}><Plus size={16} /></button></div>{snapshot?.notebooks.filter(item => !item.trashedAt).map(item => <button key={item.id} className={`nav-item ${page === 'notebooks' && item.id === notebookId ? 'selected' : ''}`} onClick={() => void openNotebook(item.id)}><span className={`notebook-dot ${item.color}`} /><span>{item.name}</span></button>)}{snapshot?.notebooks.filter(item => !item.trashedAt).length === 0 && <span className="sidebar-empty">No notebooks yet</span>}</div>
         {page === 'notebooks' && notebook && <div className="sidebar-section scheme-nav"><div className="sidebar-section-heading"><span className="sidebar-label">Schemes</span><button className="icon-button" aria-label="New scheme" onClick={() => setPanel({ kind: 'scheme' })}><Plus size={16} /></button></div>{notebookSchemes.map(item => <div className="scheme-nav-item" key={item.id}><button className={`nav-item ${item.id === schemeId ? 'selected' : ''}`} onClick={() => void openScheme(item.id)}><GitBranch size={16} /><span>{item.name}</span></button><button className="icon-button scheme-edit" aria-label={`Edit scheme ${item.name}`} onClick={() => setPanel({ kind: 'scheme', schemeId: item.id })}><Settings size={13} /></button></div>)}<p className="sidebar-hint">Overlapping ordered views of the same runs.</p></div>}
-        <div className="sidebar-bottom"><div className="settings-row"><button className="nav-item" onClick={() => setPanel({ kind: 'settings' })}><Settings size={18} /><span>Settings</span></button><button className="appearance-shortcut icon-button" onClick={() => setPanel({ kind: 'settings' })} aria-label="Adjust appearance" title="Adjust appearance"><SlidersHorizontal size={17} /></button></div>{mode === 'demo' && <button className="text-button mode-switch" onClick={() => void returnToLibrary()}>Return to my library</button>}</div>
+        <div className="sidebar-bottom">{mode === 'real' && backupStatus && <button className="backup-summary" onClick={() => setPanel({kind:'settings',tab:'backups'})} title="Open backup protection details"><strong>{!backupStatus.configured ? 'Set up backups' : backupStatus.running ? 'Protecting your work…' : backupStatus.overdue ? 'Backup needs attention' : 'Local checkpoint ready'}</strong><small>{backupStatus.lastLocalBackupAt ? new Date(backupStatus.lastLocalBackupAt).toLocaleString() : 'No verified checkpoint yet'}{backupStatus.pendingDeliveryCount ? ` · ${backupStatus.pendingDeliveryCount} Box copies pending` : ''}</small></button>}<div className="settings-row"><button className="nav-item" onClick={() => setPanel({ kind: 'settings' })}><Settings size={18} /><span>Settings</span></button><button className="appearance-shortcut icon-button" onClick={() => setPanel({ kind: 'settings' })} aria-label="Adjust appearance" title="Adjust appearance"><SlidersHorizontal size={17} /></button></div>{mode === 'demo' && <button className="text-button mode-switch" onClick={() => void returnToLibrary()}>Return to my library</button>}</div>
       </aside>
 
-      {page === 'tracker' && snapshot ? <Tracker snapshot={snapshot} mode={mode} onSnapshot={applySnapshot} onError={setError} onBeforeOperation={flushDraft} onOpenEntry={(notebook, run) => void openNotebook(notebook, run)} /> : state.status === 'loading' ? <LoadingState /> : state.status === 'error' ? <BackendError message={state.message} onRetry={() => setRetryCount(value => value + 1)} onDemo={() => void enterDemo()} /> : !notebook ? <Directory snapshot={snapshot!} view={directoryView} onView={view => { setDirectoryView(view); void updatePreference({ directoryView: view }); }} onOpen={id => void openNotebook(id)} onNew={() => setPanel({ kind: 'new-notebook' })} onReturn={() => void returnToLibrary()} mode={mode} /> : <NotebookWorkspace snapshot={snapshot!} notebook={notebook} entry={entry} entries={visibleEntries.map(run => ({ ...run, attachments: snapshot!.attachments.filter(attachment => attachment.runId === run.id) }))} scheme={scheme} search={search} sort={sort} layout={layout} activeSection={activeSection} setActiveSection={setActiveSection} onOpenDirectory={() => void openDirectory()} onOpenEntry={id => void openEntry(id)} onSort={value => { setSort(value); setSchemeId(value === 'scheme' ? notebookSchemes[0]?.id ?? null : null); void updatePreference({ sort: value }); }} onSearch={setSearch} onNew={() => setPanel({ kind: 'new-experiment' })} onCitations={citationId => entry && setPanel({ kind: 'citations', experimentId: entry.experimentId, citationId })} onRepeat={() => setPanel({ kind: 'repeat' })} onExport={scope => setPanel({ kind: 'export', scope })} onEdit={() => setPanel({ kind: 'metadata', target: 'run' })} onEditExperiment={() => entry && setPanel({ kind: 'metadata', target: 'experiment' })} onEditNotebook={() => setPanel({ kind: 'metadata', target: 'notebook' })} onManageSchemes={() => setPanel({ kind: 'scheme' })} onTrashNotebook={() => void moveToTrash('notebook', notebook.id)} onTrashExperiment={() => entry && void moveToTrash('experiment', entry.experimentId)} onTrashRun={() => entry && void moveToTrash('run', entry.id)} documents={draftDocuments ?? entry?.documents ?? { information: { type: 'doc', content: [] }, method: { type: 'doc', content: [] }, notes: { type: 'doc', content: [] }, data: { type: 'doc', content: [] } }} onDocumentsChange={documents => { setDraftDocuments(documents); schedulerRef.current?.markDirty(documents); }} readOnly={readOnly} saveState={saveState} resetToken={resetToken} onRetrySave={() => void retrySave()} onReloadSave={reloadDraft} onAttachment={attachment => setPanel({ kind: 'attachment', attachment })} onAddAttachments={() => void importAttachments()} />}
+      {page === 'tracker' && snapshot ? <Tracker snapshot={snapshot} mode={mode} onSnapshot={applySnapshot} onError={setError} onBeforeOperation={flushDraft} onOpenEntry={(notebook, run) => void openNotebook(notebook, run)} /> : state.status === 'loading' ? <LoadingState /> : state.status === 'error' ? <BackendError onRestored={replaceRestoredLibrary} onError={setError} message={state.message} onRetry={() => setRetryCount(value => value + 1)} onDemo={() => void enterDemo()} /> : !notebook ? <Directory snapshot={snapshot!} view={directoryView} onView={view => { setDirectoryView(view); void updatePreference({ directoryView: view }); }} onOpen={(id, runId) => void openNotebook(id, runId)} onNew={() => setPanel({ kind: 'new-notebook' })} onReturn={() => void returnToLibrary()} mode={mode} /> : <NotebookWorkspace snapshot={snapshot!} notebook={notebook} entry={entry} entries={visibleEntries.map(run => ({ ...run, attachments: snapshot!.attachments.filter(attachment => attachment.runId === run.id) }))} scheme={scheme} search={search} sort={sort} layout={layout} activeSection={activeSection} setActiveSection={setActiveSection} onOpenDirectory={() => void openDirectory()} onOpenEntry={id => void openEntry(id)} onSort={value => { setSort(value); setSchemeId(value === 'scheme' ? notebookSchemes[0]?.id ?? null : null); void updatePreference({ sort: value }); }} onSearch={setSearch} onNew={() => setPanel({ kind: 'new-experiment' })} onCitations={citationId => entry && setPanel({ kind: 'citations', experimentId: entry.experimentId, citationId })} onRepeat={() => setPanel({ kind: 'repeat' })} onExport={scope => setPanel({ kind: 'export', scope })} onEdit={() => setPanel({ kind: 'metadata', target: 'run' })} onEditExperiment={() => entry && setPanel({ kind: 'metadata', target: 'experiment' })} onEditNotebook={() => setPanel({ kind: 'metadata', target: 'notebook' })} onManageSchemes={() => setPanel({ kind: 'scheme' })} onTrashNotebook={() => void moveToTrash('notebook', notebook.id)} onTrashExperiment={() => entry && void moveToTrash('experiment', entry.experimentId)} onTrashRun={() => entry && void moveToTrash('run', entry.id)} documents={draftDocuments ?? entry?.documents ?? { information: { type: 'doc', content: [] }, method: { type: 'doc', content: [] }, notes: { type: 'doc', content: [] }, data: { type: 'doc', content: [] } }} onDocumentsChange={documents => { setDraftDocuments(documents); schedulerRef.current?.markDirty(documents); }} readOnly={readOnly} saveState={saveState} resetToken={resetToken} onRetrySave={() => void retrySave()} onReloadSave={reloadDraft} onAttachment={attachment => setPanel({ kind: 'attachment', attachment })} onAddAttachments={() => void importAttachments()} />}
     </div>
-    {progress && progress.operation !== 'idle' && <div className="global-progress" role="status"><span>{progress.message ?? progress.phase}</span>{progress.total ? <progress value={progress.completed ?? 0} max={progress.total} /> : <span className="progress-pulse" />}<button className="icon-button" aria-label="Cancel operation" title="Cancel operation" onClick={() => void cancelProgress()}><X size={14} /></button></div>}
+    {progress && progress.operation !== 'idle' && <div className="global-progress" role="status"><span>{progress.message ?? progress.phase}</span>{progress.total ? <progress value={progress.completed ?? 0} max={progress.total} /> : <span className="progress-pulse" />}<button className="icon-button" aria-label="Cancel operation" title="Cancel operation" disabled={progress.cancellable === false} onClick={() => void cancelProgress()}><X size={14} /></button></div>}
     {error && <div className="app-error" role="alert"><X size={16} /><span>{error}</span><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
-    {panel && snapshot && <Panels panel={panel} onClose={() => setPanel(null)} layout={layout} setLayout={value => { setLayout(value); void updatePreference({ layout: value }); }} appearance={appearance} setAppearance={value => { setAppearance(value); void updatePreference({ appearance: value }); }} snapshot={snapshot} notebook={notebook} entry={entry ?? undefined} selectedRunIds={visibleEntries.map(item => item.id)} mode={mode} onSnapshot={applySnapshot} onRestored={replaceRestoredLibrary} onError={setError} onBeforeOperation={flushDraft} />}
+    {panel && snapshot && <Panels panel={panel} onClose={() => setPanel(null)} layout={layout} setLayout={value => { setLayout(value); void updatePreference({ layout: value }); }} appearance={appearance} setAppearance={value => { setAppearance(value); if (mode === 'demo') void updatePreference({appearance:value}); else appearanceScheduler.current?.markDirty(value); }} snapshot={snapshot} notebook={notebook} entry={entry ?? undefined} selectedRunIds={visibleEntries.map(item => item.id)} mode={mode} onSnapshot={applySnapshot} onRestored={replaceRestoredLibrary} onError={setError} onBeforeOperation={flushDraft} />}
   </div>;
 }
 
 function LoadingState() { return <main className="directory-main"><div className="state-screen" role="status"><span className="loading-mark" /><h1>Opening your library…</h1><p>Reading notebooks stored on this Mac.</p></div></main>; }
 
-function BackendError({ message, onRetry, onDemo }: { message: string; onRetry: () => void; onDemo: () => void }) { return <main className="directory-main"><div className="state-screen"><WifiOff size={30} /><h1>We couldn’t open the local library</h1><p>{message}</p><div className="state-actions"><button className="button button-primary" onClick={onRetry}>Retry</button><button className="button" onClick={onDemo}>View demonstration</button></div><small>Demonstration mode uses fictional records in memory and never calls the desktop bridge.</small></div></main>; }
+function BackendError({ message, onRetry, onDemo, onRestored, onError }: { message: string; onRetry: () => void; onDemo: () => void; onRestored: (snapshot: LibrarySnapshot) => void; onError: (message: string) => void }) { return <main className="directory-main"><div className="state-screen"><WifiOff size={30} /><h1>We couldn’t open the local library</h1><p>{message}</p><div className="state-actions"><button className="button button-primary" onClick={onRetry}>Retry</button><button className="button" onClick={onDemo}>View demonstration</button></div><small>Demonstration mode uses fictional records in memory and never calls the desktop bridge.</small><BackupSettings mode="real" onRestored={onRestored} onError={onError} onBeforeOperation={async () => true} /></div></main>; }
 
-function Directory({ snapshot, view, onView, onOpen, onNew, onReturn, mode }: { snapshot: LibrarySnapshot; view: 'grid' | 'list'; onView: (view: 'grid' | 'list') => void; onOpen: (id: string) => void; onNew: () => void; onReturn: () => void; mode: 'real' | 'demo' }) {
+function Directory({ snapshot, view, onView, onOpen, onNew, onReturn, mode }: { snapshot: LibrarySnapshot; view: 'grid' | 'list'; onView: (view: 'grid' | 'list') => void; onOpen: (id: string, runId?: string) => void; onNew: () => void; onReturn: () => void; mode: 'real' | 'demo' }) {
   const notebooks = snapshot.notebooks.filter(item => !item.trashedAt);
   const recent = [...snapshot.runs].filter(item => isActiveRun(snapshot, item)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5);
-  return <main className="directory-main"><div className="breadcrumb-bar"><span><FolderOpen size={15} />Workspace<span className="breadcrumb-slash">/</span><strong>All notebooks</strong></span><span className="quiet-label">{mode === 'demo' ? 'Demonstration workspace' : 'Personal workspace'}</span></div><div className="directory-content"><div className="page-heading"><div><h1>Lab notebooks<span className="heading-spark" aria-hidden="true">✦</span></h1></div><div className="page-heading-actions"><button className="button button-primary" onClick={onNew}><Plus size={17} />New notebook</button>{mode === 'demo' && <button className="text-button" onClick={onReturn}>Return to my library</button>}</div></div>{notebooks.length ? <><div className="directory-controls"><div className="underlined-label">All notebooks <span>{notebooks.length}</span></div><div className="view-toggle" aria-label="Notebook view"><button aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'selected' : ''} onClick={() => onView('grid')}><Grid2X2 size={16} /></button><button aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'selected' : ''} onClick={() => onView('list')}><List size={17} /></button></div></div><div className={`notebook-cards ${view}`}>{notebooks.map((item, index) => <NotebookCard notebook={item} index={index} key={item.id} runCount={snapshot.runs.filter(run => run.notebookId === item.id && isActiveRun(snapshot, run)).length} onOpen={() => onOpen(item.id)} />)}</div></> : <div className="empty-state directory-empty"><Library size={30} /><h2>Your library is ready for its first notebook</h2><p>Create a notebook to start a durable record on this Mac.</p><button className="button button-primary" onClick={onNew}><Plus size={16} />Create notebook</button></div>}{recent.length > 0 && <><div className="recent-heading"><h2>Recent entries</h2></div><div className="recent-entries"><div className="recent-table-heading"><span>Entry</span><span>Notebook</span><span>Experiment date</span><span /></div>{recent.map(item => <button key={item.id} className="recent-row" onClick={() => onOpen(item.notebookId)}><span className="recent-entry-name"><span className="recent-file-icon"><FileText size={18} /></span><span><strong>{item.title}</strong><small>{entryCode(item)}</small></span></span><span className="recent-notebook"><i className={`notebook-dot ${snapshot.notebooks.find(book => book.id === item.notebookId)?.color ?? 'sage'}`} />{snapshot.notebooks.find(book => book.id === item.notebookId)?.name}</span><span className="recent-date">{formatDate(item.date)}</span><ChevronRight size={15} /></button>)}</div></>}</div></main>;
+  return <main className="directory-main"><div className="breadcrumb-bar"><span><FolderOpen size={15} />Workspace<span className="breadcrumb-slash">/</span><strong>All notebooks</strong></span><span className="quiet-label">{mode === 'demo' ? 'Demonstration workspace' : 'Personal workspace'}</span></div><div className="directory-content"><div className="page-heading"><div><h1>Lab notebooks<span className="heading-spark" aria-hidden="true">✦</span></h1></div><div className="page-heading-actions"><button className="button button-primary" onClick={onNew}><Plus size={17} />New notebook</button>{mode === 'demo' && <button className="text-button" onClick={onReturn}>Return to my library</button>}</div></div>{notebooks.length ? <><div className="directory-controls"><div className="underlined-label">All notebooks <span>{notebooks.length}</span></div><div className="view-toggle" aria-label="Notebook view"><button aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'selected' : ''} onClick={() => onView('grid')}><Grid2X2 size={16} /></button><button aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'selected' : ''} onClick={() => onView('list')}><List size={17} /></button></div></div><div className={`notebook-cards ${view}`}>{notebooks.map((item, index) => <NotebookCard notebook={item} index={index} key={item.id} runCount={snapshot.runs.filter(run => run.notebookId === item.id && isActiveRun(snapshot, run)).length} onOpen={() => onOpen(item.id)} />)}</div></> : <div className="empty-state directory-empty"><Library size={30} /><h2>Your library is ready for its first notebook</h2><p>Create a notebook to start a durable record on this Mac.</p><button className="button button-primary" onClick={onNew}><Plus size={16} />Create notebook</button></div>}{recent.length > 0 && <><div className="recent-heading"><h2>Recent entries</h2></div><div className="recent-entries"><div className="recent-table-heading"><span>Entry</span><span>Notebook</span><span>Experiment date</span><span /></div>{recent.map(item => <button key={item.id} className="recent-row" onClick={() => onOpen(item.notebookId, item.id)}><span className="recent-entry-name"><span className="recent-file-icon"><FileText size={18} /></span><span><strong>{item.title}</strong><small>{entryCode(item)}</small></span></span><span className="recent-notebook"><i className={`notebook-dot ${snapshot.notebooks.find(book => book.id === item.notebookId)?.color ?? 'sage'}`} />{snapshot.notebooks.find(book => book.id === item.notebookId)?.name}</span><span className="recent-date">{formatDate(item.date)}</span><ChevronRight size={15} /></button>)}</div></>}</div></main>;
 }
 
 function NotebookCard({ notebook, index, runCount, onOpen }: { notebook: LibrarySnapshot['notebooks'][number]; index: number; runCount: number; onOpen: () => void }) {

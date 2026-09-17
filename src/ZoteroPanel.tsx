@@ -1,3 +1,4 @@
+import { desktopAPI } from './desktop-api';
 import {citationLabel, CITATION_STYLES} from '../shared/citations.cjs';
 import { useEffect, useRef, useState } from 'react';
 import { Check, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
@@ -56,7 +57,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
   useEffect(() => {
     mounted.current = true;
     const activeSession = crypto.randomUUID(); sessionId.current = activeSession;
-    return () => { mounted.current = false; queryEpoch.current++; sourceEpoch.current++; if (!readOnly) void window.labmate?.zotero.cancel({sessionId:activeSession}); };
+    return () => { mounted.current = false; queryEpoch.current++; sourceEpoch.current++; if (!readOnly) void desktopAPI?.zotero.cancel({sessionId:activeSession}); };
   }, [readOnly]);
   const failure = (message: string) => { if (mounted.current) setError(message); };
 
@@ -64,7 +65,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
     const epoch = ++sourceEpoch.current;
     setLibraries([]); setCollections([]); setItems([]); setSelected([]); setCandidate(null); setLibraryNext(null); setNextStart(null);
     if (!connected || !connection) return;
-    void window.labmate?.zotero.libraries({generation:connection.generation, start:0}).then(result => {
+    void desktopAPI?.zotero.libraries({generation:connection.generation, start:0}).then(result => {
       if (!mounted.current || epoch !== sourceEpoch.current) return;
       if (result.ok) { setLibraries(result.value.items); setLibraryNext(result.value.nextStart); setLibraryId('user/0'); }
       else failure(result.error.message);
@@ -75,7 +76,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
     let cancelled = false;
     setCollections([]); setCollectionKey(''); setCollectionNext(null);
     if (!connected || !connection || !library) return;
-    void window.labmate?.zotero.collections({generation:connection.generation, libraryType:library.libraryType, libraryId:library.libraryId, start:0}).then(result => {
+    void desktopAPI?.zotero.collections({generation:connection.generation, libraryType:library.libraryType, libraryId:library.libraryId, start:0}).then(result => {
       if (cancelled || !mounted.current) return;
       if (result.ok) { setCollections(result.value.items); setCollectionNext(result.value.nextStart); }
       else failure(result.error.message);
@@ -89,7 +90,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
     if (!connected || !connection || !library) return;
     setSearching(true);
     const timer = setTimeout(() => {
-      void window.labmate?.zotero.search({generation:connection.generation, libraryType:library.libraryType, libraryId:library.libraryId, query, start:0, style, ...(collectionKey ? {collectionKey} : {})}).then(result => {
+      void desktopAPI?.zotero.search({generation:connection.generation, libraryType:library.libraryType, libraryId:library.libraryId, query, start:0, style, ...(collectionKey ? {collectionKey} : {})}).then(result => {
         if (!mounted.current || epoch !== queryEpoch.current) return;
         setSearching(false);
         if (result.ok) { setItems(result.value.items); setNextStart(result.value.nextStart); }
@@ -105,17 +106,17 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
     setBusy(true); setError('');
     try {
       if (kind === 'libraries' && libraryNext !== null) {
-        const result = await window.labmate?.zotero.libraries({generation:connection.generation,start:libraryNext});
+        const result = await desktopAPI?.zotero.libraries({generation:connection.generation,start:libraryNext});
         if (!mounted.current || source !== sourceEpoch.current) return;
         if (result?.ok) { setLibraries(old => [...old, ...result.value.items]); setLibraryNext(result.value.nextStart); }
         else if(result) failure(result.error.message);
       } else if (kind === 'collections' && collectionNext !== null) {
-        const result = await window.labmate?.zotero.collections({generation:connection.generation,libraryType:library.libraryType,libraryId:library.libraryId,start:collectionNext});
+        const result = await desktopAPI?.zotero.collections({generation:connection.generation,libraryType:library.libraryType,libraryId:library.libraryId,start:collectionNext});
         if (!mounted.current || epoch !== queryEpoch.current) return;
         if (result?.ok) { setCollections(old => [...old, ...result.value.items]); setCollectionNext(result.value.nextStart); }
         else if(result) failure(result.error.message);
       } else if (kind === 'items' && nextStart !== null) {
-        const result = await window.labmate?.zotero.search({generation:connection.generation,libraryType:library.libraryType,libraryId:library.libraryId,query,start:nextStart,style,...(collectionKey?{collectionKey}:{})});
+        const result = await desktopAPI?.zotero.search({generation:connection.generation,libraryType:library.libraryType,libraryId:library.libraryId,query,start:nextStart,style,...(collectionKey?{collectionKey}:{})});
         if (!mounted.current || epoch !== queryEpoch.current) return;
         if (result?.ok) { setItems(old => [...new Map([...old,...result.value.items].map(item => [itemKey(item),item])).values()]); setNextStart(result.value.nextStart); }
         else if(result) failure(result.error.message);
@@ -132,7 +133,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
       else {
         failure(result ? result.error.message : 'The desktop connection is unavailable.');
         if (result && !result.ok && result.error.code === 'STALE_REVISION') {
-          const latest = await window.labmate?.records.snapshot();
+          const latest = await desktopAPI?.records.snapshot();
           if (mounted.current && latest?.ok && latest.value.libraryGeneration === snapshot.libraryGeneration) onSnapshot(latest.value);
         }
       }
@@ -143,7 +144,7 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
     setBusy(true); setError(''); setCandidate(null);
     const captured = target();
     try {
-      const result = await window.labmate?.citations.previewRefresh({...captured,id:isSaved.id,generation:connection.generation,sessionId:sessionId.current});
+      const result = await desktopAPI?.citations.previewRefresh({...captured,id:isSaved.id,generation:connection.generation,sessionId:sessionId.current});
       if (!mounted.current) return;
       if (result?.ok) setCandidate({...result.value,target:captured});
       else failure(result ? result.error.message : 'The desktop connection is unavailable.');
@@ -165,10 +166,10 @@ export default function ZoteroPanel({snapshot, experimentId, citationId, readOnl
         }) : <p className="muted-note">No references on this page.{nextStart!==null?' Continue to the next page.':''}</p>}</div>
         {nextStart!==null && <button className="button button-small" disabled={busy||searching} onClick={()=>void more('items')}>Load more references</button>}
       </>}
-      {detail && <section className="citation-detail-card" aria-label="Reference details"><Bibliography item={detail}/>{isSaved && <div className="citation-actions"><button className="button button-small" disabled={busy||!connected||readOnly} onClick={()=>void refresh()}><RefreshCw size={14}/>Refresh details</button><button className="button button-small danger-outline" disabled={busy||readOnly} onClick={()=>void mutate(()=>window.labmate!.citations.remove({...target(),id:isSaved.id}),'Citation removed from every run of this experiment.')}><Trash2 size={14}/>Remove from experiment</button></div>}</section>}
-      {candidate && <section className="citation-detail-card" aria-label="Updated reference preview"><h3>Updated Zotero details</h3><p className="field-help">Review these details before updating the reference for every run.</p><Bibliography item={candidate.item}/><div className="citation-actions"><button className="button button-primary" disabled={busy} onClick={()=>void mutate(()=>window.labmate!.citations.applyRefresh({...candidate.target,token:candidate.token,sessionId:sessionId.current}),'Reference details updated for every run.')} >Use updated details</button><button className="button" disabled={busy} onClick={()=>setCandidate(null)}>Keep saved details</button></div></section>}
+      {detail && <section className="citation-detail-card" aria-label="Reference details"><Bibliography item={detail}/>{isSaved && <div className="citation-actions"><button className="button button-small" disabled={busy||!connected||readOnly} onClick={()=>void refresh()}><RefreshCw size={14}/>Refresh details</button><button className="button button-small danger-outline" disabled={busy||readOnly} onClick={()=>void mutate(()=>desktopAPI!.citations.remove({...target(),id:isSaved.id}),'Citation removed from every run of this experiment.')}><Trash2 size={14}/>Remove from experiment</button></div>}</section>}
+      {candidate && <section className="citation-detail-card" aria-label="Updated reference preview"><h3>Updated Zotero details</h3><p className="field-help">Review these details before updating the reference for every run.</p><Bibliography item={candidate.item}/><div className="citation-actions"><button className="button button-primary" disabled={busy} onClick={()=>void mutate(()=>desktopAPI!.citations.applyRefresh({...candidate.target,token:candidate.token,sessionId:sessionId.current}),'Reference details updated for every run.')} >Use updated details</button><button className="button" disabled={busy} onClick={()=>setCandidate(null)}>Keep saved details</button></div></section>}
       {error && <p className="panel-warning" role="alert">{error}</p>}{notice && <p className="panel-status" role="status">{notice}</p>}
     </div>
-    <div className="modal-footer"><span>{busy?'Saving or loading…':experiment?'Citations are shared across this experiment’s runs.':'Select an experiment to associate references.'}</span><div className="citation-actions"><button className="button" onClick={onClose}>Done</button><button className="button button-primary" disabled={busy||searching||!connected||!experiment||!selected.length||readOnly} onClick={()=>void mutate(()=>window.labmate!.citations.add({...target(),generation:connection!.generation,sessionId:sessionId.current,items:items.filter(i=>selected.includes(itemKey(i))).map(identity)}),'Citations added to every run of this experiment.')}><Plus size={15}/>Add to experiment{selected.length?` (${selected.length})`:''}</button></div></div>
+    <div className="modal-footer"><span>{busy?'Saving or loading…':experiment?'Citations are shared across this experiment’s runs.':'Select an experiment to associate references.'}</span><div className="citation-actions"><button className="button" onClick={onClose}>Done</button><button className="button button-primary" disabled={busy||searching||!connected||!experiment||!selected.length||readOnly} onClick={()=>void mutate(()=>desktopAPI!.citations.add({...target(),generation:connection!.generation,sessionId:sessionId.current,items:items.filter(i=>selected.includes(itemKey(i))).map(identity)}),'Citations added to every run of this experiment.')}><Plus size={15}/>Add to experiment{selected.length?` (${selected.length})`:''}</button></div></div>
   </Modal>;
 }

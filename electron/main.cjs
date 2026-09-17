@@ -29,6 +29,8 @@ const {
   shell,
   clipboard,
   safeStorage,
+  nativeTheme,
+  powerMonitor,
   utilityProcess,
 } = electron;
 
@@ -52,6 +54,7 @@ const CLOSE_RESULT_CHANNEL = 'labmate:before-close-result';
 
 const PUBLIC_METHODS = Object.freeze(new Set([
   ...Object.keys(citationData.schemas),
+  'appearance.status',
   'records.snapshot',
   'records.createNotebook',
   'records.updateNotebook',
@@ -80,6 +83,7 @@ const PUBLIC_METHODS = Object.freeze(new Set([
   'backups.revealDestination',
   'backups.run',
   'backups.restore',
+  'backups.verify',
   'jobs.cancel',
   'dictation.capabilities', 'dictation.prepare', 'dictation.start', 'dictation.stop', 'dictation.cancel',
 ]));
@@ -90,6 +94,7 @@ const JOB_METHODS = Object.freeze(new Set([
   'exports.write',
   'backups.run',
   'backups.restore',
+  'backups.verify',
 ]));
 
 const ERROR_CODES = Object.freeze(new Set([
@@ -99,7 +104,8 @@ const ERROR_CODES = Object.freeze(new Set([
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
 const DEFAULT_WORKER_CLOSE_TIMEOUT_MS = 3_000;
-const DAILY_BACKUP_INTERVAL_MS = 60 * 60 * 1_000;
+const DAILY_BACKUP_INTERVAL_MS = 60 * 1_000;
+const BACKUP_DEADLINE_MS = 15 * 60 * 1_000;
 const OPEN_CACHE_MAX_ENTRIES = 64;
 const OPEN_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
@@ -195,7 +201,7 @@ function publicPayloadError(method, payload) {
       && typeof payload.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.id)
       ? null : 'Invalid attachments.open payload';
   }
-  if (['backups.status', 'backups.changeDestination', 'backups.revealDestination'].includes(method)) return payload === undefined ? null : `${method} takes no payload`;
+  if (['appearance.status', 'backups.status', 'backups.changeDestination', 'backups.revealDestination'].includes(method)) return payload === undefined ? null : `${method} takes no payload`;
   if (method === 'dictation.capabilities') return payload === undefined ? null : 'Dictation capabilities takes no payload';
   if (method.startsWith('dictation.')) {
     try { validateSession(payload, ['dictation.prepare', 'dictation.start'].includes(method)); return null; }
@@ -238,6 +244,8 @@ function validateJobEvent(value) {
 function cloneJobEvent(value) {
   if (!validateJobEvent(value)) return null;
   const event = { jobId: value.jobId, operation: value.operation, phase: value.phase };
+  if (typeof value.cancellable === 'boolean') event.cancellable = value.cancellable;
+  if (typeof value.state === 'string') event.state = value.state;
   if (value.completed !== undefined) event.completed = value.completed;
   if (value.total !== undefined) event.total = value.total;
   if (value.message !== undefined) event.message = value.message.slice(0, 500);
@@ -524,8 +532,9 @@ class LocalConfigStore {
     const decrypted = this.decrypt(raw.value);
     if (!decrypted.ok) return decrypted;
     const folder = validateExistingDirectory(decrypted.value.destination, this.fsApi, { writable: true });
-    if (!folder.ok) return unavailableResult('Backup destination is unavailable; retry backup setup');
-    return { ok: true, value: { ...decrypted.value, destination: folder.value } };
+    const roots = detectBoxDrivePaths(safeHomePath(this.appApi, this.env), this.fsApi);
+    const available = folder.ok && roots.some(root => isWithinDirectory(realpath(this.fsApi, root), folder.value));
+    return { ok: true, value: { ...decrypted.value, destination: folder.ok ? folder.value : decrypted.value.destination, destinationAvailable: available } };
   }
 
   readStatus() {
@@ -533,8 +542,8 @@ class LocalConfigStore {
     if (!raw.ok || !raw.value) return raw;
     const decrypted = this.decrypt(raw.value);
     if (!decrypted.ok) return decrypted;
-    const folder = validateExistingDirectory(raw.value.destination, this.fsApi, { writable: true });
-    return { ok: true, value: { ...raw.value, destinationAvailable: folder.ok } };
+    const usable = this.readUsable();
+    return usable.ok ? {ok: true, value: {...raw.value, destinationAvailable: usable.value?.destinationAvailable}} : usable;
   }
 
   changeDestination(destination) {
@@ -668,7 +677,7 @@ class WorkerClient {
     this.onExit(code);
   }
 
-  request(method, payload) {
+  request(method, payload, libraryGeneration) {
     const started = this.start();
     if (!started.ok) return Promise.resolve(started);
     if (!this.worker || typeof this.worker.postMessage !== 'function') return Promise.resolve(unavailableResult());
@@ -676,7 +685,7 @@ class WorkerClient {
     return new Promise(resolve => {
       this.pending.set(id, { resolve, method });
       try {
-        this.worker.postMessage({ id, method, payload });
+        this.worker.postMessage({ id, method, payload, ...(libraryGeneration ? {libraryGeneration} : {}) });
       } catch {
         this.pending.delete(id);
         resolve(unavailableResult('Backend worker could not receive the request'));
@@ -684,23 +693,14 @@ class WorkerClient {
     });
   }
 
-  async close(timeoutMs = DEFAULT_WORKER_CLOSE_TIMEOUT_MS) {
+  async close() {
     if (!this.worker) return { ok: true, value: true };
     this.closing = true;
     const worker = this.worker;
-    const response = this.request('__shutdown', undefined);
-    let result;
-    try {
-      result = await Promise.race([
-        response,
-        new Promise(resolve => setTimeout(() => resolve(unavailableResult('Timed out closing backend worker')), timeoutMs)),
-      ]);
-    } catch {
-      result = unavailableResult('Timed out closing backend worker');
-    }
-    try { if (worker && typeof worker.kill === 'function') worker.kill(); } catch { /* best effort */ }
-    this.worker = null;
-    this.failed = true;
+    // Shutdown is queued behind the capture/restore boundary and all backup
+    // workers. A timeout must never kill an operation that is still committing.
+    const result = await this.request('__shutdown', undefined);
+    if (result.ok) { try { worker?.kill?.(); } catch {} this.worker = null; this.failed = true; }
     this.closing = false;
     return result;
   }
@@ -781,6 +781,8 @@ function createBridgeRuntime({
   const jobWindows = new Map();
   const activeJobs = new Map();
   let backupInFlight = null;
+  let protectionInspection = null;
+  let inspectionInFlight = null;
   let backupTimer = null;
   let backupRunning = false;
   let backupMessage = '';
@@ -932,14 +934,14 @@ function createBridgeRuntime({
     jobWindows.delete(jobId);
   }
 
-  async function requestRendererFlush(window) {
+  async function requestRendererFlush(window, checkpoint = false) {
     if (!window || !window.webContents) return true;
     const webContentsId = Number.isInteger(window.webContents.id) ? window.webContents.id : window.id;
     if (!Number.isInteger(webContentsId) || !registeredCloseListeners.has(webContentsId)) return true;
     const requestId = randomJobId();
     const promise = new Promise(resolve => closeWaiters.set(requestId, { resolve, webContentsId }));
     try {
-      window.webContents.send(CLOSE_REQUEST_CHANNEL, requestId);
+      window.webContents.send(CLOSE_REQUEST_CHANNEL, requestId, checkpoint);
     } catch {
       closeWaiters.delete(requestId);
       return false;
@@ -973,10 +975,13 @@ function createBridgeRuntime({
     if (!attempted.ok) { backupRunning = false; releaseJob(effectiveJobId); return attempted; }
     const operation = (async () => {
       try {
+        const windows = window ? [window] : (BrowserWindowApi?.getAllWindows?.() || []);
+        for (const open of windows) if (!(await requestRendererFlush(open, true))) return unavailableResult('Current drafts could not be saved; the backup will retry.');
         const result = await runtime.worker.request('backups.run', {
           jobId: effectiveJobId,
           password: config.value.password,
-          destination: config.value.destination,
+          destination: config.value.destinationAvailable === false ? null : config.value.destination,
+          force: !automatic,
         });
         if (!result.ok) {
           backupMessage = result.error.message;
@@ -985,14 +990,18 @@ function createBridgeRuntime({
         }
         const workerValue = result.value && typeof result.value === 'object' ? result.value : {};
         const completedAt = typeof workerValue.createdAt === 'string' ? workerValue.createdAt : new Date().toISOString();
-        const recorded = configStore.recordBackupSuccess(completedAt);
+        const copiedAt = workerValue.lastBoxCopyAt || (workerValue.pendingDeliveryCount === undefined ? completedAt : null);
+        const recorded = copiedAt ? configStore.recordBackupSuccess(copiedAt) : {ok:true};
+        if (workerValue.pendingDeliveryCount) configStore.recordAttempt(attemptedAt, workerValue.lastFailure?.message || 'Local checkpoint verified; Box delivery pending.');
         if (!recorded.ok) {
           backupMessage = recorded.error.message;
           configStore.recordAttempt(attemptedAt, backupMessage);
           return recorded;
         }
         backupMessage = typeof workerValue.message === 'string' ? workerValue.message : 'Backup completed';
-        return { ok: true, value: makeBackupStatus(configStore.readStatus(), false, backupMessage) };
+        const current = await status();
+        if (current.ok) { current.value.running = false; delete current.value.progress; }
+        return current;
       } catch (error) {
         backupMessage = 'Backup could not complete; retry the operation';
         configStore.recordAttempt(attemptedAt, backupMessage);
@@ -1008,12 +1017,12 @@ function createBridgeRuntime({
     return operation;
   }
 
-  async function runRestore(payload, window) {
+  async function runRestore(payload, window, verify = false) {
     if (backupInFlight) return unavailableResult('A backup or restore is already running');
     const reserved = reserveJob(payload.jobId, window);
     if (!reserved.ok) return reserved;
     const jobId = reserved.value;
-    activeJobs.get(jobId).method = 'backups.restore';
+    activeJobs.get(jobId).method = verify ? 'backups.verify' : 'backups.restore';
     backupRunning = true;
     restoringLibrary = true;
     zotero.invalidate();
@@ -1032,6 +1041,7 @@ function createBridgeRuntime({
         const source = validateExistingFile(selected.filePaths[0], fsApi);
         if (!source.ok) return resultError('VALIDATION', source.error);
 
+        if (verify) return await runtime.worker.request('backups.verify', {password: payload.password, source: source.value, jobId});
         const confirmation = await dialogApi.showMessageBox(window, {
           type: 'warning',
           title: 'Restore LabMate backup?',
@@ -1056,7 +1066,7 @@ function createBridgeRuntime({
     return operation;
   }
 
-  async function importAttachments(payload, window) {
+  async function importAttachments(payload, window, libraryGeneration) {
     const reserved = reserveJob(payload.jobId, window);
     if (!reserved.ok) return reserved;
     const jobId = reserved.value;
@@ -1073,7 +1083,7 @@ function createBridgeRuntime({
         if (!checked.ok) return resultError('VALIDATION', checked.error);
         if (!paths.includes(checked.value)) paths.push(checked.value);
       }
-      return runtime.worker.request('attachments.import', { runId: payload.runId, paths, jobId });
+      return runtime.worker.request('attachments.import', { runId: payload.runId, paths, jobId }, libraryGeneration);
     } finally {
       releaseJob(jobId);
     }
@@ -1171,20 +1181,38 @@ function createBridgeRuntime({
     return error ? resultError('IO', 'Backup destination could not be opened') : { ok: true, value: { opened: true } };
   }
 
+  function backupHealth() {
+    try {
+      const {readCatalog, catalogStatus} = require('./backend/backup-catalog.cjs');
+      return catalogStatus(readCatalog(root), configStore.readRaw().value?.destination);
+    } catch (error) { return {lastFailure:{at:new Date().toISOString(), message:error.message}}; }
+  }
+
   async function status() {
+    const health = backupHealth();
+    if (!inspectionInFlight) {
+      inspectionInFlight = runtime.worker.request('backups.inspect', undefined).then(value => { protectionInspection = value; }).finally(() => { inspectionInFlight = null; });
+    }
+    const inspected = protectionInspection;
+    const protectedRevision = !!inspected?.ok && !!health.capturedRevision && health.capturedRevision === inspected.value?.currentToken;
     return { ok: true, value: { ...makeBackupStatus(configStore.readStatus(), backupRunning, backupMessage || undefined),
+      ...health, lastFailure: health.lastFailure || makeBackupStatus(configStore.readStatus(), backupRunning).lastFailure, protectedRevision,
+      overdue: !protectedRevision && (!health.lastLocalBackupAt || Date.now() - Date.parse(health.lastLocalBackupAt) > BACKUP_DEADLINE_MS),
+      capacity: inspected?.ok ? inspected.value?.capacity : undefined,
       ...(backupRunning && backupProgress ? { progress: backupProgress } : {}) } };
   }
 
-  async function handleInvoke(event, method, payload) {
+  async function handleInvoke(event, method, payload, libraryGeneration) {
     try {
       if (!isAllowedTopFrame(event)) return resultError('VALIDATION', 'Requesting frame is not allowed');
       const validation = validateRendererPayload(method, payload);
       if (!validation.ok) return validation;
+      if (libraryGeneration !== undefined && !workerContract.isUUID(libraryGeneration)) return resultError('VALIDATION', 'Invalid library generation');
       const window = getWindowForEvent(event, BrowserWindowApi);
       if (method.startsWith('dictation.')) return await invokeDictation(event, method, payload);
       if (citationData.schemas[method]) return await invokeCitations(event, method, payload);
       switch (method) {
+        case 'appearance.status': return {ok:true, value:require('./appearance.cjs').applyMaterial(window, nativeTheme)};
         case 'yield.copy': {
           const documents = Object.fromEntries(['starting', 'product'].map(role => [role, {type:'doc', content:[{type:'paragraph', content:[{type:'text', text:payload[role].text, marks:[{type:'yieldMaterial', attrs:{role,id:role,...(payload[role].manual ? {manual:payload[role].manual} : {})}}]}]}]}]));
           const result = calculateMarkedYield(documents);
@@ -1198,8 +1226,9 @@ function createBridgeRuntime({
         case 'backups.changeDestination': return configureBackups(undefined, window, true);
         case 'backups.revealDestination': return revealBackupDestination();
         case 'backups.run': return runBackup(payload.jobId, window);
-        case 'backups.restore': return runRestore(payload, window);
-        case 'attachments.import': return importAttachments(payload, window);
+        case 'backups.restore': { const result = await runRestore(payload, window); if (result.ok) require('./appearance.cjs').applyMaterial(window, nativeTheme, result.value.preferences?.material); return result; }
+        case 'backups.verify': return runRestore(payload, window, true);
+        case 'attachments.import': return importAttachments(payload, window, libraryGeneration);
         case 'attachments.preview': return previewAttachment(payload, window);
         case 'exports.write': return writeExport(payload, window);
         case 'attachments.open': {
@@ -1216,8 +1245,11 @@ function createBridgeRuntime({
         }
         case 'jobs.cancel':
           return runtime.worker.request('jobs.cancel', payload);
-        default:
-          return runtime.worker.request(method, payload);
+        default: {
+          const result = await runtime.worker.request(method, payload, libraryGeneration);
+          if (result.ok && result.value?.preferences) require('./appearance.cjs').applyMaterial(window, nativeTheme, result.value.preferences.material);
+          return result;
+        }
       }
     } catch (error) {
       const code = error && typeof error.code === 'string' && ERROR_CODES.has(error.code) ? error.code : 'IO';
@@ -1237,11 +1269,27 @@ function createBridgeRuntime({
     waiter.resolve(ok);
   }
 
+  async function checkpointBeforeClose(window) {
+    if (backupInFlight) await backupInFlight;
+    const config = configStore.readRaw();
+    if (!config.ok || !config.value) return true;
+    const result = await runBackup(randomJobId(), window, true);
+    const health = backupHealth();
+    if (result.ok && !health.pendingDeliveryCount) return true;
+    const response = await dialogApi.showMessageBox(window, {
+      type: 'warning', title: 'Backup needs attention',
+      message: health.lastLocalBackupAt ? 'Your work is saved locally. The latest Box backup could not be completed.' : 'Your work is saved, but a verified backup could not be completed.',
+      detail: health.lastFailure?.message || (result.ok ? 'Delivery will retry when LabMate opens again.' : result.error.message),
+      buttons: ['Keep LabMate open', 'Quit with backup pending'], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    return response?.response === 1;
+  }
+
   async function closeWindow(event, window) {
     if (shuttingDown || (window && allowedCloseWindows.has(window))) return;
     event.preventDefault();
     const flushed = await requestRendererFlush(window);
-    if (!flushed) return;
+    if (!flushed || !(await checkpointBeforeClose(window))) return;
     runtime.cancelWindowDictation(window?.webContents);
     runtime.cancelWindowCitations(window?.webContents);
     if (window && typeof window === 'object') allowedCloseWindows.add(window);
@@ -1270,6 +1318,8 @@ function createBridgeRuntime({
       shuttingDown = false;
       return false;
     }
+    if (!(await checkpointBeforeClose(windows[0]))) { shuttingDown = false; return false; }
+    stopDailyBackup();
     allowWindowClose = true;
     speech.dispose(); speechOwners.clear();
     zotero.dispose();
@@ -1282,10 +1332,15 @@ function createBridgeRuntime({
     if (backupTimer) return;
     const catchUp = async () => {
       const config = configStore.readRaw();
-      if (!config.ok || !config.value || !isDailyBackupDue(config.value.lastBackupAt)) return;
+      if (shuttingDown || !config.ok || !config.value || backupInFlight) return;
+      const health = backupHealth();
+      if (!health.pendingDeliveryCount && protectionInspection?.ok && protectionInspection.value?.currentToken === health.capturedRevision) return;
+      if (!health.pendingDeliveryCount && health.lastLocalBackupAt && Date.now() - Date.parse(health.lastLocalBackupAt) < BACKUP_DEADLINE_MS) return;
       await runBackup(randomJobId(), null, true);
     };
     void catchUp();
+    runtime.catchUpBackup = catchUp;
+    powerMonitor?.on?.('resume', catchUp);
     backupTimer = setInterval(() => { void catchUp(); }, DAILY_BACKUP_INTERVAL_MS);
     if (backupTimer && typeof backupTimer.unref === 'function') backupTimer.unref();
   }
@@ -1293,12 +1348,13 @@ function createBridgeRuntime({
   function stopDailyBackup() {
     if (!backupTimer) return;
     clearInterval(backupTimer);
+    if (runtime.catchUpBackup) powerMonitor?.removeListener?.('resume', runtime.catchUpBackup);
     backupTimer = null;
   }
 
   function installIPC() {
     if (!ipcMain || typeof ipcMain.handle !== 'function') return false;
-    ipcMain.handle(INVOKE_CHANNEL, (event, method, payload) => handleInvoke(event, method, payload));
+    ipcMain.handle(INVOKE_CHANNEL, (event, method, payload, libraryGeneration) => handleInvoke(event, method, payload, libraryGeneration));
     if (typeof ipcMain.on === 'function') {
       ipcMain.on(CLOSE_LISTENER_CHANNEL, event => registerCloseListener(event));
       ipcMain.on(CLOSE_RESULT_CHANNEL, (event, requestId, ok) => receiveCloseResult(event, requestId, ok));
@@ -1341,6 +1397,7 @@ function createWindow(runtime) {
       partition: 'elb-preview',
     },
   });
+  require('./appearance.cjs').installMaterial(window, nativeTheme);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());

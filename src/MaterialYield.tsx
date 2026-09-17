@@ -1,3 +1,4 @@
+import { desktopAPI } from './desktop-api';
 import { useEffect, useRef, useState } from 'react';
 import { Mark, mergeAttributes } from '@tiptap/core';
 import type { Editor } from '@tiptap/core';
@@ -133,8 +134,8 @@ export function MaterialYieldControls({editor, disabled, documents, getDocuments
     const epoch = ++copyEpoch.current;
     setCopying(true);
     try {
-      if (window.labmate) {
-        const copied = await window.labmate.yield.copy({starting:{text:materials.starting[0].text,manual:materials.starting[0].manual}, product:{text:materials.product[0].text,manual:materials.product[0].manual}});
+      if (desktopAPI) {
+        const copied = await desktopAPI.yield.copy({starting:{text:materials.starting[0].text,manual:materials.starting[0].manual}, product:{text:materials.product[0].text,manual:materials.product[0].manual}});
         if (!copied.ok) throw new Error(copied.error.message);
       } else {
         await navigator.clipboard.writeText(calculation.summary);

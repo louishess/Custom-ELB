@@ -12,6 +12,8 @@
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+const { EXPORT_ORDERS, compareRuns } = require('../../shared/ordering.cjs');
 const { yieldSummary } = require('../../shared/yield.cjs');
 const { DESIGN, twips, contentWidth, sectionLabel, metadata, notebookContext, fitColumns, fitImage, htmlStyles } = require('./export-design.cjs');
 
@@ -33,7 +35,7 @@ const SECTION_TITLES = Object.freeze({
 });
 
 const SECTION_IDS = Object.freeze(Object.keys(SECTION_TITLES));
-const ORDER_VALUES = new Set(['newest', 'oldest', 'az', 'za', 'number-asc', 'number-desc', 'scheme']);
+const ORDER_VALUES = new Set([...EXPORT_ORDERS, 'az', 'za']);
 const FORMAT_VALUES = new Set(['txt', 'md', 'html', 'rtf', 'docx']);
 const DATA_VALUES = new Set(['none', 'captions', 'previews']);
 const NODE_TYPE_ALIASES = Object.freeze({
@@ -374,17 +376,7 @@ function orderRuns(runs, order, scheme) {
       return ai - bi || safeText(a.id).localeCompare(safeText(b.id));
     });
   }
-  let comparator;
-  switch (order) {
-    case 'newest': comparator = (a, b) => -dateCompare(a, b); break;
-    case 'oldest': comparator = dateCompare; break;
-    case 'az': comparator = (a, b) => safeText(a.title).localeCompare(safeText(b.title), 'en', { sensitivity: 'base' }); break;
-    case 'za': comparator = (a, b) => -safeText(a.title).localeCompare(safeText(b.title), 'en', { sensitivity: 'base' }); break;
-    case 'number-asc': comparator = (a, b) => Number(a.experimentNumber) - Number(b.experimentNumber) || Number(a.runNumber) - Number(b.runNumber); break;
-    case 'number-desc': comparator = (a, b) => Number(b.experimentNumber) - Number(a.experimentNumber) || Number(b.runNumber) - Number(a.runNumber); break;
-    default: comparator = () => 0;
-  }
-  return [...runs].sort((a, b) => stableCompare(a, b, comparator));
+  return [...runs].sort((a, b) => compareRuns(a, b, order));
 }
 
 function inferMime(record) {
@@ -507,7 +499,7 @@ async function resolveExportDocument(store, fileService, input, context = {}) {
     if (scheme.notebookId !== request.notebookId) throw new ExportError('VALIDATION', 'Scheme belongs to a different notebook');
   }
 
-  const activeRuns = runs.filter(item => item && item.notebookId === request.notebookId && !item.trashedAt);
+  const activeRuns = runs.filter(item => item && item.notebookId === request.notebookId && !item.trashedAt && experiments.some(parent => parent.id === item.experimentId && !parent.trashedAt));
   let selectedRuns;
   if (request.scope === 'notebook') {
     selectedRuns = scheme ? activeRuns.filter(run => scheme.runIds.includes(run.id)) : activeRuns;
@@ -1418,7 +1410,7 @@ async function commitStagedFiles(stagingDir, destination, mainName, assets, asse
     if (safeDirectory !== assetsDirectory || assetsDirectory.includes('/') || assetsDirectory.includes('\\') || assetsDirectory === '.' || assetsDirectory === '..') {
       throw new ExportError('VALIDATION', 'Generated companion asset directory was unsafe');
     }
-    targets.push({ staged: path.join(stagingDir, assetsDirectory), destination: path.join(destinationDir, assetsDirectory), directory: true });
+    targets.unshift({ staged: path.join(stagingDir, assetsDirectory), destination: path.join(destinationDir, assetsDirectory), directory: true });
   }
   for (const asset of assets) {
     if (!asset || typeof asset.name !== 'string' || !/^[a-zA-Z0-9._ -]+$/.test(asset.name) || asset.name.includes('..')) {
@@ -1436,6 +1428,7 @@ async function commitStagedFiles(stagingDir, destination, mainName, assets, asse
   const backupDir = await fsp.mkdtemp(path.join(destinationDir, '.labmate-export-backup-'));
   const backups = [];
   const promoted = [];
+  let preserveBackup = false;
   try {
     for (let index = 0; index < targets.length; index += 1) {
       checkCancelled(context);
@@ -1443,6 +1436,7 @@ async function commitStagedFiles(stagingDir, destination, mainName, assets, asse
       try { stat = await fsp.lstat(targets[index].destination); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (stat) {
+        if (targets[index].directory) throw new ExportError('IO', 'The new companion directory already exists; choose another export filename.');
         const backupPath = path.join(backupDir, `${String(index).padStart(3, '0')}-${sanitizeFilenameComponent(path.basename(targets[index].destination), 'previous')}`);
         await fsp.rename(targets[index].destination, backupPath);
         backups.push({ original: targets[index].destination, backup: backupPath });
@@ -1460,11 +1454,11 @@ async function commitStagedFiles(stagingDir, destination, mainName, assets, asse
       await fsp.rm(target.destination, { recursive: Boolean(target.directory), force: true }).catch(() => undefined);
     }
     for (const backup of backups.reverse()) {
-      await fsp.rename(backup.backup, backup.original).catch(() => undefined);
+      await fsp.rename(backup.backup, backup.original).catch(() => { preserveBackup = true; });
     }
     throw error;
   } finally {
-    await fsp.rm(backupDir, { recursive: true, force: true }).catch(() => undefined);
+    if (!preserveBackup) await fsp.rm(backupDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -1480,6 +1474,7 @@ async function writeExport(store, fileService, input, context = {}) {
     const model = await resolveExportDocument(store, fileService, request, context);
     checkCancelled(context);
     reportProgress(context, request, 'render', 0, 1, `Writing ${request.format.toUpperCase()} output`);
+    if (request.format === 'md') model.outputStem += '-' + randomUUID();
     const rendered = await renderExportDocument(model);
     stagingDir = await fsp.mkdtemp(path.join(destinationDir, '.labmate-export-'));
     await fsp.writeFile(path.join(stagingDir, destinationName), rendered.bytes, { mode: 0o600, flag: 'wx' });
@@ -1491,6 +1486,7 @@ async function writeExport(store, fileService, input, context = {}) {
     }
     reportProgress(context, request, 'commit', 0, 1, 'Committing export');
     await commitStagedFiles(stagingDir, destination, destinationName, rendered.assets || [], rendered.assetsDirectory || null, context, request);
+    context.markCommitted?.();
     reportProgress(context, request, 'complete', 1, 1, destinationName);
     return { cancelled: false, name: destinationName, warnings: model.warnings };
   } catch (error) {

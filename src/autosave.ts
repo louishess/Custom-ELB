@@ -20,6 +20,7 @@ export function createAutosaveScheduler<T>({ save, idleMs = 750, maxMs = 5000, o
   let maxTimer: ReturnType<typeof setTimeout> | undefined;
   let saving: Promise<boolean> | undefined;
   let generation = 0;
+  let disposed = false;
 
   const clearTimers = () => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -29,6 +30,7 @@ export function createAutosaveScheduler<T>({ save, idleMs = 750, maxMs = 5000, o
   };
 
   const persist = async (): Promise<boolean> => {
+    if (disposed) return true;
     if (saving) {
       const result = await saving;
       return result ? persist() : false;
@@ -40,11 +42,12 @@ export function createAutosaveScheduler<T>({ save, idleMs = 750, maxMs = 5000, o
     clearTimers();
     onState?.('saving');
     const operation = save(value).then(() => true).catch(error => {
-      onState?.(error?.code === 'STALE_REVISION' ? 'stale' : 'failed');
+      if (!disposed) onState?.(error?.code === 'STALE_REVISION' ? 'stale' : 'failed');
       return false;
     });
     saving = operation;
     const result = await operation;
+    if (disposed) return result;
     if (saving === operation) saving = undefined;
     if (!result) {
       dirty = true;
@@ -76,6 +79,6 @@ export function createAutosaveScheduler<T>({ save, idleMs = 750, maxMs = 5000, o
     },
     flush: persist,
     isDirty: () => dirty,
-    dispose() { clearTimers(); latest = undefined; dirty = false; generation += 1; },
+    dispose() { disposed = true; clearTimers(); latest = undefined; dirty = false; generation += 1; },
   };
 }

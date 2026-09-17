@@ -22,6 +22,7 @@ const CLOSE_REQUEST_CHANNEL = 'labmate:before-close';
 const CLOSE_RESULT_CHANNEL = 'labmate:before-close-result';
 
 const NAMESPACE_METHODS = Object.freeze({
+  appearance: Object.freeze(['status']),
   zotero: Object.freeze(['status', 'connect', 'disconnect', 'cancel', 'libraries', 'collections', 'search', 'item']),
   citations: Object.freeze(['add', 'remove', 'previewRefresh', 'applyRefresh', 'refreshLabel']),
   records: Object.freeze(['snapshot', 'createNotebook', 'updateNotebook', 'createExperiment', 'updateExperiment', 'repeatRun', 'updateRun']),
@@ -32,7 +33,7 @@ const NAMESPACE_METHODS = Object.freeze({
   trash: Object.freeze(['move', 'restore', 'purge']),
   attachments: Object.freeze(['import', 'preview', 'open', 'update', 'remove']),
   exports: Object.freeze(['write']),
-  backups: Object.freeze(['status', 'configure', 'changeDestination', 'revealDestination', 'run', 'restore']),
+  backups: Object.freeze(['status', 'configure', 'changeDestination', 'revealDestination', 'run', 'restore', 'verify']),
   jobs: Object.freeze(['cancel']),
   dictation: Object.freeze(['capabilities', 'prepare', 'start', 'stop', 'cancel']),
 });
@@ -58,6 +59,8 @@ function isJobEvent(value) {
 function cloneJobEvent(value) {
   if (!isJobEvent(value)) return null;
   const event = { jobId: value.jobId, operation: value.operation, phase: value.phase };
+  if (typeof value.cancellable === 'boolean') event.cancellable = value.cancellable;
+  if (['running','committing','complete','failed','cancelled'].includes(value.state)) event.state = value.state;
   if (value.completed !== undefined) event.completed = value.completed;
   if (value.total !== undefined) event.total = value.total;
   if (value.message !== undefined) event.message = value.message;
@@ -74,8 +77,18 @@ function exposeBridge() {
 
   const progressListeners = new Set();
   const closeListeners = new Set();
+  const checkpointListeners = new Set();
+  const appearanceListeners = new Set();
   const dictationListeners = new Set();
   let closeListenerRegistered = false;
+  let libraryGeneration;
+  let libraryEpoch = 0;
+
+  ipcRenderer.on('labmate:appearance', (_event, value) => {
+    if (!value || !['solid','glass'].includes(value.material)) return;
+    const status = {material: value.material, reducedTransparency: !!value.reducedTransparency, highContrast: !!value.highContrast};
+    for (const listener of appearanceListeners) { try { listener(status); } catch {} }
+  });
 
   ipcRenderer.on(PROGRESS_CHANNEL, (_event, value) => {
     const event = cloneJobEvent(value);
@@ -94,11 +107,11 @@ function exposeBridge() {
     Object.freeze(event);
     for (const listener of [...dictationListeners]) { try { listener(event); } catch { /* isolated listener */ } }
   });
-  ipcRenderer.on(CLOSE_REQUEST_CHANNEL, (_event, requestId) => {
+  ipcRenderer.on(CLOSE_REQUEST_CHANNEL, (_event, requestId, checkpoint) => {
     if (typeof requestId !== 'string' || requestId.length === 0 || requestId.length > 128) return;
     void (async () => {
       let ok = true;
-      for (const listener of [...closeListeners]) {
+      for (const listener of [...(checkpoint ? checkpointListeners : closeListeners)]) {
         try {
           if (!(await listener())) ok = false;
         } catch {
@@ -116,12 +129,23 @@ function exposeBridge() {
       const qualified = `${namespace}.${method}`;
       namespaceApi[method] = (input) => {
         if (!isAllowedMethod(qualified)) return Promise.resolve(unavailableResult());
-        return ipcRenderer.invoke(INVOKE_CHANNEL, qualified, input).catch(unavailableResult);
+        const startedEpoch = libraryEpoch;
+        return ipcRenderer.invoke(INVOKE_CHANNEL, qualified, input, libraryGeneration).then(result => {
+          if (result?.ok && result.value?.libraryGeneration) {
+            if (qualified !== 'backups.restore' && startedEpoch !== libraryEpoch) return {ok:false,error:{code:'STALE_REVISION',message:'The library was reopened or restored. Reload before saving again.'}};
+            if (result.value.kind !== 'mutation') {
+              if (libraryGeneration && libraryGeneration !== result.value.libraryGeneration) libraryEpoch += 1;
+              libraryGeneration = result.value.libraryGeneration;
+            }
+          }
+          return result;
+        }).catch(unavailableResult);
       };
     }
     api[namespace] = Object.freeze(namespaceApi);
   }
 
+  api.onAppearance = listener => { if (typeof listener !== 'function') return () => {}; appearanceListeners.add(listener); return () => appearanceListeners.delete(listener); };
   api.onProgress = (listener) => {
     if (typeof listener !== 'function') return () => {};
     progressListeners.add(listener);
@@ -133,6 +157,7 @@ function exposeBridge() {
     dictationListeners.add(listener);
     return () => dictationListeners.delete(listener);
   };
+  api.onBeforeCheckpoint = listener => { if (typeof listener !== 'function') return () => {}; checkpointListeners.add(listener); return () => checkpointListeners.delete(listener); };
   api.onBeforeClose = (listener) => {
     if (typeof listener !== 'function') return () => {};
     closeListeners.add(listener);

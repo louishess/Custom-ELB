@@ -26,7 +26,7 @@ test('schema 4 gains unset citation style; labels and preferences survive encryp
   const before=f.store.snapshot();
   f.store.db.exec('ALTER TABLE preferences DROP COLUMN citation_label');f.store.db.exec('ALTER TABLE preferences DROP COLUMN citation_style');f.store.db.pragma('user_version = 4');
   f.store.close();f.store.reopen();
-  const migrated=f.store.snapshot();assert.equal(migrated.schemaVersion,5);
+  const migrated=f.store.snapshot();assert.equal(migrated.schemaVersion,6);
   assert.equal(migrated.preferences.citationStyle,'');assert.equal(migrated.preferences.citationLabel,'title');
   assert.deepEqual(migrated.citations,before.citations);
   const item=f.item();item.snapshot.formattedCitation={text:'(Research Group 2025)',style:'chicago-author-date',fetchedAt:new Date().toISOString()};
@@ -82,7 +82,7 @@ test('schema 3 migration preserves legacy associations without promoting run sco
   const f=fixture(t);
   f.store.db.prepare('INSERT INTO citation_associations VALUES (?, ?, ?, ?, ?, ?, ?)').run(require('node:crypto').randomUUID(),f.run.id,'old','0','ABCD1234','{}',new Date().toISOString());
   f.store.db.exec('DROP TABLE experiment_citations'); f.store.db.exec('ALTER TABLE preferences DROP COLUMN citation_label'); f.store.db.exec('ALTER TABLE preferences DROP COLUMN citation_style'); f.store.db.pragma('user_version = 3'); f.store.close(); f.store.reopen();
-  const s=f.store.snapshot(); assert.equal(s.schemaVersion,5); assert.equal(s.legacyCitationCount,1); assert.deepEqual(s.citations,[]);
+  const s=f.store.snapshot(); assert.equal(s.schemaVersion,6); assert.equal(s.legacyCitationCount,1); assert.deepEqual(s.citations,[]);
 });
 test('citation backup restores complete metadata and rejects pre-restore operations', async t => {
   const f=fixture(t); const s=value(f.store.dispatch('citations.add', {...f.target(), items:[f.item()]}));

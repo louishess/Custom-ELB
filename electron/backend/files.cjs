@@ -567,6 +567,7 @@ function createFileService(store) {
     ensureManagedDirectories(root);
     const staged = [];
     const added = [];
+    const records = [];
     try {
       for (let index = 0; index < input.paths.length; index += 1) {
         checkCancelled(operationContext);
@@ -583,6 +584,7 @@ function createFileService(store) {
         Object.assign(stagedItem, copied);
       }
 
+      require('./backup-capacity.cjs').assertCapacity(store, staged);
       for (let index = 0; index < staged.length; index += 1) {
         checkCancelled(operationContext);
         const item = staged[index];
@@ -598,7 +600,8 @@ function createFileService(store) {
           kind: item.classification.kind,
           createdAt: new Date().toISOString(),
         };
-        try { unwrapStoreValue(store.addAttachment(record), 'Attachment metadata save'); }
+        records.push(record);
+        try { if (!store.addAttachments) unwrapStoreValue(store.addAttachment(record), 'Attachment metadata save'); }
         catch (error) {
           if (error instanceof FileServiceError) throw error;
           const code = typeof error?.code === 'string' && /^[A-Z_]+$/.test(error.code) ? error.code : 'IO';
@@ -608,7 +611,9 @@ function createFileService(store) {
         report(operationContext, operationEvent(operationContext, 'attachments.import', 'metadata', { completed: index + 1, total: staged.length, message: `Added ${record.name}.` }));
       }
       report(operationContext, operationEvent(operationContext, 'attachments.import', 'complete', { completed: staged.length, total: staged.length, message: 'Attachment import complete.' }));
-      return unwrapStoreValue(store.snapshot(), 'Attachment snapshot');
+      const result = store.addAttachments ? unwrapStoreValue(store.addAttachments(records), 'Attachment metadata save') : unwrapStoreValue(store.snapshot(), 'Attachment snapshot');
+      context?.markCommitted?.();
+      return result;
     } catch (error) {
       for (const id of added.reverse()) {
         try { store.removeAttachment?.(id); } catch { /* keep the recovery path safe if a store is closing */ }

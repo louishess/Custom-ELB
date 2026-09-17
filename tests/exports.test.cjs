@@ -174,11 +174,11 @@ test('real LibraryStore and file service export all five formats with previews',
     assert.ok(bytes.length > 0, `${format} output is empty`);
     assert.equal(check(bytes), true, `${format} output missed its preview/content`);
     if (format === 'md') {
-      const assetDirectory = path.join(outputDir, 'record_assets');
+      const assetDirectory = path.join(outputDir, (await fsp.readdir(outputDir)).find(name => /^record-[a-f0-9-]+_assets$/.test(name)));
       const files = await fsp.readdir(assetDirectory);
       assert.equal(files.length, 1);
-      assert.ok(files[0].startsWith('record-01-'));
-      assert.match((await fsp.readFile(destination)).toString('utf8'), /record_assets\/record-01-/);
+      assert.ok(/^record-[a-f0-9-]+-01-/.test(files[0]));
+      assert.match((await fsp.readFile(destination)).toString('utf8'), /record-[a-f0-9-]+_assets\/record-/);
     }
     if (format === 'docx') {
       const zip = await JSZip.loadAsync(bytes);
@@ -203,12 +203,13 @@ test('overwrite replaces the selected destination and rolls back primary plus co
   const overwritten = await service.write(request(notebook.id, [run.id], 'md', destination), {});
   assert.equal(overwritten.cancelled, false);
   assert.notEqual((await fsp.readFile(destination)).toString('utf8'), 'old primary');
-  assert.ok((await fsp.readdir(assetsDirectory)).some(name => name.startsWith('record-01-')));
+  assert.deepEqual(await fsp.readdir(assetsDirectory), ['old.txt']);
+  assert.equal(await fsp.readFile(path.join(assetsDirectory,'old.txt'),'utf8'), 'old asset');
 
   const originalRename = fsp.rename;
   let injected = false;
   fsp.rename = async (source, target) => {
-    if (!injected && source.includes(`${path.sep}.labmate-export-`) && path.basename(source) === 'rollback_assets') {
+    if (!injected && source.includes(`${path.sep}.labmate-export-`) && /^rollback-[a-f0-9-]+_assets$/.test(path.basename(source))) {
       injected = true;
       const error = new Error('injected companion promotion failure');
       error.code = 'EIO';
@@ -247,9 +248,10 @@ test('multi-entry Markdown export gives same-named previews globally unique comp
   const destination = path.join(outputDir, 'multi.md');
   const result = await service.write(request(notebook.id, [run.id, secondRun.id], 'md', destination), {});
   assert.equal(result.cancelled, false);
-  const assetNames = await fsp.readdir(path.join(outputDir, 'multi_assets'));
+  const directory = (await fsp.readdir(outputDir)).find(name => /^multi-[a-f0-9-]+_assets$/.test(name));
+  const assetNames = await fsp.readdir(path.join(outputDir, directory));
   assert.equal(assetNames.length, 2);
   assert.notEqual(assetNames[0], assetNames[1]);
   const markdown = (await fsp.readFile(destination)).toString('utf8');
-  for (const name of assetNames) assert.ok(markdown.includes(`multi_assets/${name}`));
+  for (const name of assetNames) assert.ok(markdown.includes(`${directory}/${name}`));
 });

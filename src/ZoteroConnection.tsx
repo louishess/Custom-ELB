@@ -1,3 +1,4 @@
+import { desktopAPI } from './desktop-api';
 import { useEffect, useState } from 'react';
 import type { ZoteroStatus } from '../shared/contracts';
 
@@ -9,7 +10,7 @@ export default function ZoteroConnection({ readOnly = false, onStatus }: {readOn
     if (readOnly) return;
     let cancelled = false;
     setBusy(true);
-    void window.labmate?.zotero.status().then(result => {
+    void desktopAPI?.zotero.status().then(result => {
       if (cancelled) return;
       if (result.ok) { setStatus(result.value); onStatus?.(result.value); }
       else setError(result.error.message);
@@ -19,7 +20,7 @@ export default function ZoteroConnection({ readOnly = false, onStatus }: {readOn
   const change = async (operation: 'connect'|'disconnect'|'status') => {
     setBusy(true); setError('');
     try {
-      const result = await window.labmate?.zotero[operation]();
+      const result = await desktopAPI?.zotero[operation]();
       if (!result) { setError('The desktop connection is unavailable.'); return; }
       if (!result.ok) { setError(result.error.message); return; }
       setStatus(result.value); onStatus?.(result.value);

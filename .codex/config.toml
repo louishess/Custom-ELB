@@ -1,3 +1,4 @@
 [agents]
+
 max_concurrent_threads_per_session = 9
 max_depth = 2

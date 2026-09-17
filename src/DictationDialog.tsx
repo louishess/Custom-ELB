@@ -1,3 +1,4 @@
+import { desktopAPI } from './desktop-api';
 import { useEffect, useRef, useState } from 'react';
 import { Download, Mic, Square } from 'lucide-react';
 import { Modal } from './components';
@@ -28,7 +29,7 @@ export default function DictationDialog({ sessionId, originLabel, onInsert, onCa
 
   useEffect(() => {
     mounted.current = true;
-    const api = window.labmate;
+    const api = desktopAPI;
     if (!api?.dictation) { setMessage('Integrated dictation is available in the LabMate desktop app on macOS 26 or later.'); return; }
     let live = true;
     void api.dictation.capabilities().then(result => {
@@ -68,7 +69,7 @@ export default function DictationDialog({ sessionId, originLabel, onInsert, onCa
   }, [sessionId]);
 
   async function prepare() {
-    const api = window.labmate;
+    const api = desktopAPI;
     if (!api || busy) return;
     const epoch = ++requestEpoch.current;
     const current = () => mounted.current && requestEpoch.current === epoch;
@@ -83,7 +84,7 @@ export default function DictationDialog({ sessionId, originLabel, onInsert, onCa
     finally { if (current()) setBusy(false); }
   }
   async function start() {
-    const api = window.labmate;
+    const api = desktopAPI;
     if (!api || busy) return;
     const epoch = ++requestEpoch.current;
     const current = () => mounted.current && requestEpoch.current === epoch;
@@ -108,7 +109,7 @@ export default function DictationDialog({ sessionId, originLabel, onInsert, onCa
     finally { if (current()) setBusy(false); }
   }
   async function stop() {
-    const api = window.labmate;
+    const api = desktopAPI;
     if (!api || busy) return;
     const epoch = ++requestEpoch.current;
     const current = () => mounted.current && requestEpoch.current === epoch;
@@ -126,7 +127,7 @@ export default function DictationDialog({ sessionId, originLabel, onInsert, onCa
     if (recording || busy) {
       requestEpoch.current += 1;
       acceptingTranscript.current = false;
-      await window.labmate?.dictation.cancel({ sessionId });
+      await desktopAPI?.dictation.cancel({ sessionId });
       if (!mounted.current) return;
       setBusy(false); setState('stopped');
     }

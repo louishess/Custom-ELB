@@ -55,6 +55,8 @@ const WORKER_METHODS = Object.freeze(new Set([
   'exports.write',
   'backups.run',
   'backups.restore',
+  'backups.verify',
+  'backups.inspect',
   'jobs.cancel',
   '__shutdown',
 ]));
@@ -66,6 +68,7 @@ const JOB_METHODS = Object.freeze(new Set([
   'exports.write',
   'backups.run',
   'backups.restore',
+  'backups.verify',
 ]));
 
 function isPlainObject(value) {
@@ -252,8 +255,9 @@ function payloadShapeError(method, payload, internal = true) {
     case 'preferences.update':
       return isPlainObject(payload)
         && Object.keys(payload).length > 0
-        && Object.keys(payload).every(key => ['appearance', 'palette', 'layout', 'directoryView', 'sort', 'citationLabel', 'citationStyle'].includes(key))
+        && Object.keys(payload).every(key => ['appearance', 'palette', 'layout', 'directoryView', 'sort', 'citationLabel', 'citationStyle', 'material'].includes(key))
         && (payload.appearance === undefined || isInteger(payload.appearance, { min: 0, max: 100 }))
+        && (payload.material === undefined || ['solid', 'glass'].includes(payload.material))
         && (payload.palette === undefined || PALETTES.includes(payload.palette))
         && (payload.layout === undefined || ['continuous', 'tabs'].includes(payload.layout))
         && (payload.directoryView === undefined || ['grid', 'list'].includes(payload.directoryView))
@@ -314,12 +318,14 @@ function payloadShapeError(method, payload, internal = true) {
       return null;
     }
     case 'backups.run':
-      return hasExactKeys(payload, internal ? ['jobId', 'password', 'destination'] : ['jobId'])
+      return hasExactKeys(payload, internal ? ['jobId', 'password', 'destination'] : ['jobId'], internal ? ['force'] : [])
         && isJobId(payload.jobId)
         && (!internal || (isString(payload.password, { min: 1, max: 4096 })
-          && isString(payload.destination, { min: 1, max: 4096 })
-          && path.isAbsolute(payload.destination)))
+          && (payload.destination === null || (isString(payload.destination, { min: 1, max: 4096 }) && path.isAbsolute(payload.destination))) && (payload.force === undefined || typeof payload.force === 'boolean')))
         ? null : fail('Invalid backups.run payload');
+    case 'backups.inspect':
+      return payload === undefined ? null : fail('Backup inspection takes no payload');
+    case 'backups.verify':
     case 'backups.restore':
       return hasExactKeys(payload, internal ? ['password', 'source', 'jobId'] : ['password', 'jobId'])
         && isString(payload.password, { min: 1, max: 4096 })
@@ -355,10 +361,10 @@ function validatePayload(method, payload, { internal = true } = {}) {
 }
 
 function validateMessage(message) {
-  if (!isPlainObject(message) || !hasExactKeys(message, ['id', 'method', 'payload'])) {
+  if (!isPlainObject(message) || !hasExactKeys(message, ['id', 'method', 'payload'], ['libraryGeneration'])) {
     return { ok: false, error: { code: 'VALIDATION', message: 'Malformed worker message' } };
   }
-  if (!isSafeIdentifier(message.id) || !WORKER_METHODS.has(message.method)) {
+  if ((message.libraryGeneration !== undefined && !isUUID(message.libraryGeneration)) || !isSafeIdentifier(message.id) || !WORKER_METHODS.has(message.method)) {
     return { ok: false, error: { code: 'VALIDATION', message: 'Malformed worker message' } };
   }
   return { ok: true, value: message };
@@ -414,16 +420,17 @@ function loadServices(root, options = {}) {
     const { createBackupService } = requireFn('./backup.cjs');
     const { createFileService } = requireFn('./files.cjs');
     const { createExportService } = requireFn('./exports.cjs');
-    const store = new LibraryStore(root);
+    const store = new LibraryStore(root, { deferOpen: !!options.recovery, mutationUpdates: true });
     const fileService = createFileService(store);
     return {
       store,
+      managedBackups: true,
       fileService,
       backupService: createBackupService(store),
       exportService: createExportService(store, fileService),
     };
   } catch (error) {
-    const unavailable = new Error('Backend services are unavailable');
+    const unavailable = new Error(`The local library could not open: ${String(error.message || 'backend initialization failed').replaceAll(root, 'the library folder')}. Retry, test a backup, or restore a verified archive.`);
     unavailable.code = 'UNAVAILABLE';
     unavailable.cause = error;
     throw unavailable;
@@ -448,7 +455,7 @@ function serviceMethod(services, method, payload, context) {
   if (method === 'attachments.update') return services.fileService.update(payload);
   if (method === 'attachments.remove') return services.fileService.remove(payload);
   if (method === 'exports.write') return services.exportService.write(payload, context);
-  if (method === 'backups.run') return services.backupService.create(payload, context);
+  if (method === 'backups.run') return services.managedBackups ? require('./backup-manager.cjs').runManagedBackup(services.store, payload, context) : services.backupService.create(payload, context);
   if (method === 'backups.restore') return services.backupService.restore(payload, context);
   throw Object.assign(new Error('Unknown worker method'), { code: 'VALIDATION' });
 }
@@ -460,6 +467,7 @@ function createWorkerRuntime(options = {}) {
   let serviceError = null;
   let closed = false;
   let queue = Promise.resolve();
+  const background = new Set();
   const activeJobs = new Map();
   const queuedJobs = new Set();
   const cancelledJobs = new Set();
@@ -493,7 +501,7 @@ function createWorkerRuntime(options = {}) {
     await services.store.close();
   };
 
-  const execute = async (message, validation) => {
+  const execute = async (message, validation, releaseQueue) => {
     if (closed && message.method !== '__shutdown') return resultError('UNAVAILABLE', 'Backend worker is closed');
     const payload = message.payload;
     const jobId = JOB_METHODS.has(message.method) ? payload.jobId : null;
@@ -514,13 +522,17 @@ function createWorkerRuntime(options = {}) {
     if (jobId) activeJobs.set(jobId, controller);
     const context = controller ? {
       signal: controller.signal,
+      releaseQueue,
+      beginCommit: () => { if (controller.signal.aborted) throw cancelledError(); controller.nonCancellable = true; },
+      markCommitted: () => { controller.committed = true; controller.nonCancellable = true; },
       onProgress: event => {
-        if (controller.signal.aborted) throw cancelledError();
+        if (controller.signal.aborted && !controller.nonCancellable) throw cancelledError();
         if (!event || typeof event !== 'object') return;
         send({ event: 'progress', value: {
           jobId,
           operation: message.method,
-          phase: typeof event.phase === 'string' ? event.phase : 'working',
+          phase: event.phase === 'complete' ? 'finishing' : typeof event.phase === 'string' ? event.phase : 'working',
+          state: controller.nonCancellable ? 'committing' : 'running', cancellable: !controller.nonCancellable,
           ...(Number.isFinite(event.completed) ? { completed: event.completed } : {}),
           ...(Number.isFinite(event.total) ? { total: event.total } : {}),
           ...(typeof event.message === 'string' ? { message: event.message.slice(0, 500) } : {}),
@@ -528,14 +540,37 @@ function createWorkerRuntime(options = {}) {
       },
     } : { signal: new AbortController().signal };
 
+    let terminal = 'complete';
     try {
       if (controller && controller.signal.aborted) throw cancelledError();
-      const result = await serviceMethod(ensureServices(), message.method, payload, context);
-      if (controller && controller.signal.aborted) throw cancelledError();
-      return normalizeResult(result);
+      if (message.method === 'backups.inspect') {
+        const {readCatalog} = require('./backup-catalog.cjs');
+        const catalog = readCatalog(root);
+        let capacity, currentToken; try { currentToken = ensureServices().store.db.prepare('SELECT change_token FROM library_state WHERE id=1').get().change_token; capacity = require('./backup-capacity.cjs').capacity(ensureServices().store); } catch {}
+        return {ok:true, value:{catalog, capacity, currentToken}};
+      }
+      if (message.method === 'backups.verify') return {ok:true, value:await require('./backup-manager.cjs').verifyBackup(root, payload, context)};
+      if (message.method === 'records.snapshot') {
+        serviceError = null;
+        if (services?.store?._closed) services = null;
+      }
+      let currentServices;
+      try { currentServices = ensureServices(); } catch (error) {
+        if (message.method !== 'backups.restore') throw error;
+        services = loadServices(root, { ...options, recovery: true }); serviceError = null; currentServices = services;
+      }
+      const changesLibrary = /^(records\.(?!snapshot)|documents\.save|preferences\.update|schemes\.|trash\.|citations\.|attachments\.(import|update|remove))/.test(message.method);
+      if (changesLibrary && currentServices.store.mutationUpdates && (message.libraryGeneration || payload?.libraryGeneration) !== currentServices.store.libraryGeneration) throw Object.assign(new Error('The library was reopened or restored. Reload before saving again.'), {code:'STALE_REVISION'});
+      const result = await serviceMethod(currentServices, message.method, payload, context);
+      if (controller && controller.signal.aborted && !controller.committed) throw cancelledError();
+      const normalized = normalizeResult(result);
+      if (!normalized.ok) terminal = normalized.error.code === 'CANCELLED' ? 'cancelled' : 'failed';
+      return normalized;
     } catch (error) {
+      terminal = error.code === 'CANCELLED' ? 'cancelled' : 'failed';
       return errorToResult(error);
     } finally {
+      if (jobId) send({ event: 'progress', value: { jobId, operation: message.method, phase: terminal, state: terminal, cancellable: false } });
       if (jobId) activeJobs.delete(jobId);
       if (jobId) knownJobs.delete(jobId);
     }
@@ -547,6 +582,7 @@ function createWorkerRuntime(options = {}) {
     const jobId = message.payload.jobId;
     const active = activeJobs.get(jobId);
     if (active) {
+      if (active.nonCancellable) return { ok: true, value: { cancelled: false } };
       active.abort();
       return { ok: true, value: { cancelled: true } };
     }
@@ -590,21 +626,21 @@ function createWorkerRuntime(options = {}) {
       knownJobs.add(jobId);
       queuedJobs.add(jobId);
     }
+    let releaseQueue;
+    const released = new Promise(resolve => { releaseQueue = resolve; });
+    const priorBackups = [...background];
     const task = queue.then(async () => {
-      const result = await execute(message, payloadCheck);
-      sendReply(message.id, result);
-      replies.delete(message.id);
-      return result;
-    }, async () => {
-      const result = await execute(message, payloadCheck);
+      if (['backups.run', 'backups.restore', 'backups.verify', '__shutdown'].includes(message.method)) await Promise.allSettled(priorBackups);
+      const result = await execute(message, payloadCheck, releaseQueue);
       sendReply(message.id, result);
       replies.delete(message.id);
       return result;
     });
-    // A failed task must not permanently poison the serial queue.  The reply
-    // itself is sent by the task, so no mutation is replayed after a worker
-    // restart.
-    queue = task.catch(() => undefined);
+    if (message.method === 'backups.run') {
+      background.add(task);
+      void task.finally(() => background.delete(task));
+      queue = Promise.race([task, released]).catch(() => undefined);
+    } else queue = task.catch(() => undefined);
     replies.set(message.id, task);
   };
 
@@ -623,7 +659,7 @@ function createWorkerRuntime(options = {}) {
     get services() { return services; },
     get serviceError() { return serviceError; },
     get closed() { return closed; },
-    waitForIdle: () => queue,
+    waitForIdle: () => Promise.allSettled([queue, ...background]),
   };
 }
 

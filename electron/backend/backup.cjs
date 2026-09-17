@@ -79,10 +79,11 @@ function makeJobContext(context, jobId, operation) {
       // leave a backup half-written or change its data-integrity result.
     }
   };
+  let committing = false;
   const throwIfAborted = () => {
-    if (signal && signal.aborted) throw backupError('CANCELLED', 'Backup operation cancelled.');
+    if (!committing && signal && signal.aborted) throw backupError('CANCELLED', 'Backup operation cancelled.');
   };
-  return { signal, progress, throwIfAborted };
+  return { signal, progress, throwIfAborted, beginCommit() { throwIfAborted(); context?.beginCommit?.(); committing = true; }, markCommitted() { context?.markCommitted?.(); } };
 }
 
 function normalizeRoot(value, fallback) {
@@ -594,10 +595,7 @@ function validateCandidateSchema(candidatePath, manifestSchemaVersion, store, op
   }
   const Database = loadSqliteDriver(options);
   if (!Database) {
-    // The SQLite magic is still checked by the caller. A deployment without a
-    // SQLite driver cannot run PRAGMA integrity_check, so an explicit validator
-    // can supply the stronger check during packaging or a native test harness.
-    return null;
+    throw backupError('UNAVAILABLE', 'SQLite verification is unavailable. The current library has not been replaced.');
   }
   let db;
   try {
@@ -625,6 +623,10 @@ function validateCandidateSchema(candidatePath, manifestSchemaVersion, store, op
       }
     }
     if (manifestSchemaVersion >= 4) require('../../shared/citations.cjs').validateStoredCitations(db);
+    if (manifestSchemaVersion >= 6) {
+      const material = db.prepare('SELECT material FROM preferences WHERE id=1').get()?.material;
+      if (!['solid', 'glass'].includes(material) || !db.prepare('SELECT change_token FROM library_state WHERE id=1').get()?.change_token) throw backupError('CORRUPT_BACKUP', 'The restored library state is invalid.');
+    }
     if (manifestSchemaVersion >= 5) {
       const labels = db.prepare('SELECT citation_label, citation_style FROM preferences WHERE id=1').get();
       if (!labels || !['title','formatted'].includes(labels.citation_label) || (labels.citation_style !== '' && !require('../../shared/citations.cjs').styleSchema.safeParse(labels.citation_style).success)) throw backupError('CORRUPT_BACKUP', 'The restored database citation preferences are invalid.');
@@ -855,13 +857,16 @@ async function currentLibraryForRollback(store, root, rollbackPath, job, maxFile
   const dbStat = await lstatOrNull(dbPath);
   if (dbStat) {
     if (dbStat.isSymbolicLink() || !dbStat.isFile()) throw backupError('IO', 'The current library database is not a regular file.');
-    if (dbStat.size > maxFileBytes) throw backupError('IO', 'The current library database is too large to retain for rollback.');
-    if (typeof store.backupDatabase === 'function') {
+    if (typeof store.backupDatabase === 'function' && store.db?.open) {
       await store.backupDatabase(path.join(rollbackPath, 'library.sqlite'));
     } else {
       // This fallback is retained for small test doubles. A live LibraryStore
       // always exposes backupDatabase, which is required for WAL-safe copies.
       await fsp.copyFile(dbPath, path.join(rollbackPath, 'library.sqlite'));
+      for (const suffix of ['-wal', '-shm']) if (await lstatOrNull(dbPath + suffix)) {
+        await ensureRegularFile(dbPath + suffix);
+        await fsp.copyFile(dbPath + suffix, path.join(rollbackPath, 'library.sqlite' + suffix));
+      }
     }
     await ensureRegularFile(path.join(rollbackPath, 'library.sqlite'), 'rollback database');
   }
@@ -869,11 +874,12 @@ async function currentLibraryForRollback(store, root, rollbackPath, job, maxFile
   if (oldObjects) {
     if (oldObjects.isSymbolicLink() || !oldObjects.isDirectory()) throw backupError('IO', 'The current objects directory is unsafe.');
     await ensureDirectory(path.join(rollbackPath, 'objects'));
-    const snapshot = typeof store.snapshot === 'function' ? store.snapshot() : null;
-    const objects = attachmentObjects(snapshot, objectsRoot);
-    await validateObjectSources(objects, maxFileBytes, job);
-    for (const object of objects) {
-      await fsp.copyFile(object.path, path.join(rollbackPath, 'objects', object.hash));
+    // The old library is evidence to preserve, not a prerequisite for recovery.
+    // Copy available bytes as found, including corrupt/unreferenced regular objects.
+    for (const name of await fsp.readdir(objectsRoot)) {
+      const source = path.join(objectsRoot, name);
+      const stat = await lstatOrNull(source);
+      if (stat?.isFile() && !stat.isSymbolicLink()) await fsp.copyFile(source, path.join(rollbackPath, 'objects', name));
     }
   }
   return { dbPath, objectsRoot };
@@ -968,7 +974,8 @@ function recoverRestoreJournal(rootValue) {
   const candidateDb = validateJournalPath(root, journal.candidateDb);
   const candidateObjects = validateJournalPath(root, journal.candidateObjects);
   const rollbackPath = validateJournalPath(root, journal.rollbackPath);
-  const journalPaths = [dbPath, objectsPath, oldDb, oldObjects, candidateDb, candidateObjects, rollbackPath];
+  const sidecars = (journal.sidecars || []).map(pair => ({ live: validateJournalPath(root, pair.live), old: validateJournalPath(root, pair.old) }));
+  const journalPaths = [dbPath, objectsPath, oldDb, oldObjects, candidateDb, candidateObjects, rollbackPath, ...sidecars.flatMap(pair => [pair.live, pair.old])];
   if (new Set(journalPaths).size !== journalPaths.length) throw backupError('IO', 'The restore journal contains duplicate paths.');
   for (const target of journalPaths) {
     try {
@@ -982,12 +989,15 @@ function recoverRestoreJournal(rootValue) {
   try {
     if (complete) {
       if (!fs.existsSync(dbPath)) throw backupError('IO', 'The completed restore is missing its live database.');
+      try {
       fs.rmSync(oldDb, { force: true });
+      for (const pair of sidecars) fs.rmSync(pair.old, { force: true });
       fs.rmSync(oldObjects, { recursive: true, force: true });
       fs.rmSync(candidateDb, { force: true });
       fs.rmSync(candidateObjects, { recursive: true, force: true });
       fs.rmSync(activeJournalPath, { force: true });
       return { recovered: true, phase: 'committed' };
+      } catch { return { recovered: true, phase: 'committed', cleanupPending: true }; }
     }
     // Remove any candidate that made it into the live location, then put the
     // old path back. The old paths are rename-only swap files, so this remains
@@ -999,6 +1009,10 @@ function recoverRestoreJournal(rootValue) {
     const oldDbExists = fs.existsSync(oldDb);
     if (oldDbExists) {
       if (liveDb) fs.rmSync(dbPath, { force: true });
+      for (const pair of sidecars) {
+        if (fs.existsSync(pair.old)) { fs.rmSync(pair.live, { force: true }); fs.renameSync(pair.old, pair.live); }
+        else if (['candidate-db-moved', 'candidate-objects-moved'].includes(journal.phase)) fs.rmSync(pair.live, { force: true });
+      }
       fs.renameSync(oldDb, dbPath);
     }
     const liveObjects = fs.existsSync(objectsPath);
@@ -1009,7 +1023,7 @@ function recoverRestoreJournal(rootValue) {
     }
     fs.rmSync(candidateDb, { force: true });
     fs.rmSync(candidateObjects, { recursive: true, force: true });
-    fs.rmSync(rollbackPath, { recursive: true, force: true });
+    // Keep the complete pre-restore copy for inspection even after rollback.
     fs.rmSync(activeJournalPath, { force: true });
     return { recovered: true, phase: 'rolled-back' };
   } catch (error) {
@@ -1040,12 +1054,15 @@ async function switchLibrary(store, root, extractionRoot, rollbackPath, job, opt
     candidateDb: journalRelative(root, candidateDb),
     candidateObjects: journalRelative(root, candidateObjects),
     rollbackPath: journalRelative(root, rollbackPath),
+    sidecars: ['-wal', '-shm'].map(suffix => ({ live: journalRelative(root, dbPath + suffix), old: journalRelative(root, oldDb + suffix) })),
   };
   let currentDbMoved = false;
   let currentObjectsMoved = false;
   let candidateDbMoved = false;
   let candidateObjectsMoved = false;
   let storeClosed = false;
+  let committed = false;
+  let snapshot;
   const notifyPhase = async () => {
     if (typeof options.onSwitchPhase === 'function') await options.onSwitchPhase(journal.phase, { root, rollbackPath });
   };
@@ -1054,9 +1071,12 @@ async function switchLibrary(store, root, extractionRoot, rollbackPath, job, opt
     if (typeof store.close !== 'function' || typeof store.reopen !== 'function') throw backupError('IO', 'The library store cannot be reopened for restore.');
     await writeRestoreJournal(root, journal);
     await notifyPhase();
+    job.beginCommit();
+    job.progress('switching', 'Finishing restore; this step cannot be cancelled.');
     await store.close();
     storeClosed = true;
     currentDbMoved = await safeRename(dbPath, oldDb);
+    for (const suffix of ['-wal', '-shm']) await safeRename(dbPath + suffix, oldDb + suffix);
     journal.phase = 'db-moved';
     await writeRestoreJournal(root, journal);
     await notifyPhase();
@@ -1081,11 +1101,14 @@ async function switchLibrary(store, root, extractionRoot, rollbackPath, job, opt
     await notifyPhase();
     job.throwIfAborted();
     await store.reopen();
+    snapshot = store.snapshot();
     journal.phase = 'opened';
     await writeRestoreJournal(root, journal);
+    committed = true;
+    job.markCommitted();
     await notifyPhase();
-    const snapshot = store.snapshot();
     await fsp.rm(oldDb, { force: true });
+    for (const suffix of ['-wal', '-shm']) await fsp.rm(oldDb + suffix, { force: true });
     await fsp.rm(oldObjects, { recursive: true, force: true });
     journal.phase = 'committed';
     await writeRestoreJournal(root, journal);
@@ -1093,6 +1116,7 @@ async function switchLibrary(store, root, extractionRoot, rollbackPath, job, opt
     await fsp.rm(path.join(root, RESTORE_JOURNAL_NAME), { force: true });
     return snapshot;
   } catch (error) {
+    if (committed) return { ...snapshot, recoveryWarnings: ['Restore completed. Retained recovery files will be cleaned up at a later start.'] };
     const switchStarted = currentDbMoved || currentObjectsMoved || candidateDbMoved || candidateObjectsMoved;
     if (!switchStarted) {
       try {
@@ -1110,9 +1134,17 @@ async function switchLibrary(store, root, extractionRoot, rollbackPath, job, opt
       if (storeClosed) {
         try { await store.close(); } catch { /* best effort */ }
       }
-      if (candidateDbMoved) await fsp.rm(dbPath, { force: true });
+      const rollbackDb = await pathExists(oldDb) ? oldDb : path.join(rollbackPath, 'library.sqlite');
+      if (currentDbMoved) await ensureRegularFile(rollbackDb, 'retained database');
+      if (candidateDbMoved) {
+        for (const suffix of ['', '-wal', '-shm']) await fsp.rm(dbPath + suffix, { force: true });
+      }
       if (candidateObjectsMoved) await fsp.rm(objectsRoot, { recursive: true, force: true });
-      if (currentDbMoved) await fsp.rename(oldDb, dbPath);
+      if (currentDbMoved) {
+        if (rollbackDb === oldDb) await fsp.rename(oldDb, dbPath);
+        else await fsp.copyFile(rollbackDb, dbPath);
+        for (const suffix of ['-wal', '-shm']) if (await pathExists(rollbackDb + suffix)) await fsp.copyFile(rollbackDb + suffix, dbPath + suffix);
+      }
       else if (await pathExists(path.join(rollbackPath, 'library.sqlite'))) await fsp.copyFile(path.join(rollbackPath, 'library.sqlite'), dbPath);
       if (currentObjectsMoved) await fsp.rename(oldObjects, objectsRoot);
       else if (await pathExists(path.join(rollbackPath, 'objects'))) {
@@ -1296,7 +1328,7 @@ function createBackupService(store, options = {}) {
         if (preserveStaging) wrapped.preserveStaging = true;
         throw wrapped;
       } finally {
-        if (!preserveStaging) {
+        if (!preserveStaging && !await pathExists(path.join(root, RESTORE_JOURNAL_NAME))) {
           try { await fsp.rm(stage, { recursive: true, force: true }); } catch { /* staging cleanup is best effort */ }
         }
       }
@@ -1306,4 +1338,4 @@ function createBackupService(store, options = {}) {
   return Object.freeze({ create, restore });
 }
 
-module.exports = { createBackupService, BackupError, RESTORE_JOURNAL_NAME, recoverRestoreJournal };
+module.exports = { createBackupService, BackupError, RESTORE_JOURNAL_NAME, recoverRestoreJournal, copyFileAtomic };

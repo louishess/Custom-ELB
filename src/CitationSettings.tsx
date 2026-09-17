@@ -1,3 +1,4 @@
+import { desktopAPI } from './desktop-api';
 import {useEffect, useRef, useState} from 'react';
 import {CITATION_STYLES} from '../shared/citations.cjs';
 import type {CitationStyle, LibrarySnapshot, Preferences} from '../shared/contracts';
@@ -9,7 +10,7 @@ export default function CitationSettings({snapshot, readOnly, updatePreference, 
 }) {
   const [busy,setBusy]=useState(false), [message,setMessage]=useState('');
   const session=useRef<string|null>(null), mounted=useRef(true), changing=useRef(false);
-  const cancel=()=>{const id=session.current;session.current=null;if(id)void window.labmate?.zotero.cancel({sessionId:id});};
+  const cancel=()=>{const id=session.current;session.current=null;if(id)void desktopAPI?.zotero.cancel({sessionId:id});};
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;cancel();};},[]);
   const active=(s:LibrarySnapshot)=>s.citations.filter(c=>s.experiments.some(e=>e.id===c.experimentId&&!e.trashedAt&&s.notebooks.some(n=>n.id===e.notebookId&&!n.trashedAt)));
   const pending=active(snapshot).filter(c=>!snapshot.preferences.citationStyle||c.snapshot.formattedCitation?.style!==snapshot.preferences.citationStyle).length;
@@ -21,13 +22,13 @@ export default function CitationSettings({snapshot, readOnly, updatePreference, 
     const current=()=>mounted.current&&session.current===id;
     let latest=base, updated=0, failed=0, reason='';
     try {
-      const status=await window.labmate?.zotero.status();if(!current())return;
+      const status=await desktopAPI?.zotero.status();if(!current())return;
       if(!status?.ok||status.value.state!=='connected') {setMessage('Connect Zotero, then choose Update citation labels. Saved labels remain available offline.');return;}
       for(const reference of references) {
         if(!current())return;
         const experiment=latest.experiments.find(e=>e.id===reference.experimentId)!;
         setMessage(`Updating labels ${updated+failed+1} of ${references.length}…`);
-        const result=await window.labmate!.citations.refreshLabel({id:reference.id,experimentId:experiment.id,expectedRevision:experiment.revision,libraryGeneration:latest.libraryGeneration,generation:status.value.generation,sessionId:id});
+        const result=await desktopAPI!.citations.refreshLabel({id:reference.id,experimentId:experiment.id,expectedRevision:experiment.revision,libraryGeneration:latest.libraryGeneration,generation:status.value.generation,sessionId:id});
         if(!current())return;
         if(result.ok) {latest=result.value;updated++;onSnapshot(latest);}
         else {failed++;reason=result.error.message;if(['STALE_REVISION','CANCELLED'].includes(result.error.code))break;}
