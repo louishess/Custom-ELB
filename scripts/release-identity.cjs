@@ -17,7 +17,7 @@ function identity(root) {
   return {version:JSON.parse(fs.readFileSync(path.join(root,'package.json'))).version,schema:require(path.join(root,'electron/backend/schema.cjs')).SCHEMA_VERSION,commit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),sourceHash,sourceFiles:files,runtimeFiles:inventory(root,['electron','shared','dist'])};
 }
 function assertClean(root) {
-  const paths=execFileSync('git',['status','--porcelain','--untracked-files=all'],{cwd:root,encoding:'utf8'}).trim().split('\n').filter(Boolean);
+  const paths=execFileSync('git',['status','--porcelain','--untracked-files=all'],{cwd:root,encoding:'utf8'}).split('\n').filter(Boolean);
   const relevant=paths.filter(line=>/^(electron|shared|src|native|scripts|tests)\//.test(line.slice(3)) || /^(package(-lock)?\.json|tsconfig\.json|vite\.config\.ts|index\.html)$/.test(line.slice(3)));
   if(relevant.length) throw new Error('Commit the release source before packaging: '+relevant.join(', '));
 }

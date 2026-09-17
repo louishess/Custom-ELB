@@ -128,3 +128,43 @@ test('old-generation mutations are refused after a library is reopened', async (
   runtime.receive({id:'old',method:'preferences.update',payload:{material:'glass'},libraryGeneration:old}); await runtime.waitForIdle(); assert.equal(messages.find(m=>m.id==='old').result.error.code,'STALE_REVISION'); assert.equal(store.snapshot().preferences.material,'solid');
   runtime.receive({id:'fresh',method:'preferences.update',payload:{material:'glass'},libraryGeneration:store.libraryGeneration}); await runtime.waitForIdle(); assert.equal(messages.find(m=>m.id==='fresh').result.value.kind,'mutation'); await runtime.close();
 });
+
+test('late cancellation through the worker cannot conceal a committed restore', async () => {
+ const {createWorkerRuntime}=require('../electron/backend/worker.cjs');const store=library();const saved=await createBackupService(store).create(request());const run=store.snapshot().runs[0];value(store.dispatch('records.updateRun',{id:run.id,expectedRevision:run.revision,changes:{title:'Changed'}}));const messages=[];let runtime;
+ const service=createBackupService(store,{onSwitchPhase:phase=>{if(phase==='committed')runtime.receive({id:'cancel',method:'jobs.cancel',payload:{jobId:'late-restore'}});}});
+ runtime=createWorkerRuntime({root:store.root,services:{store,backupService:service},parentPort:{on(){},postMessage:m=>messages.push(m)}});
+ runtime.receive({id:'restore',method:'backups.restore',payload:{password:request().password,jobId:'late-restore',source:path.join(store.root,'backups',saved.name)}});await runtime.waitForIdle();assert.equal(messages.find(m=>m.id==='restore').result.ok,true,JSON.stringify(messages));assert.equal(messages.find(m=>m.id==='cancel').result.value.cancelled,false);assert.equal(messages.find(m=>m.id==='restore').result.value.runs[0].title,'Original');await runtime.close();
+});
+
+test('rename failure at every restore publication step preserves a coherent reopen', async () => {
+ const source=library();const saved=await createBackupService(source).create(request());
+ for(let failAt=1;failAt<=10;failAt++) {
+  const store=library();const oldId=store.snapshot().runs[0].id;const original=fs.promises.rename;let calls=0,injected=false;
+  fs.promises.rename=async(from,to)=>{if(String(to).startsWith(store.root)&&++calls===failAt){injected=true;throw Object.assign(new Error('injected rename failure'),{code:'EIO'});}return original(from,to);};
+  try{await createBackupService(store).restore({...request(),source:path.join(source.root,'backups',saved.name)});}catch(error){assert.ok(['IO','CORRUPT_BACKUP'].includes(error.code));}finally{fs.promises.rename=original;}
+  assert.equal(injected,true);store.close();const reopened=new LibraryStore(store.root);stores.add(reopened);assert.equal(reopened.db.pragma('integrity_check',{simple:true}),'ok');assert.ok([oldId,source.snapshot().runs[0].id].includes(reopened.snapshot().runs[0].id));
+ }
+});
+
+test('disk-capacity failure leaves the saved library and previous checkpoint intact', async () => {
+ const store=library();await runManagedBackup(store,request(null));const before=readCatalog(store.root).archives[0].sha256;const old=fs.statfsSync;fs.statfsSync=()=>({bavail:0,bsize:4096});
+ try{await assert.rejects(runManagedBackup(store,{...request(null),force:true}),/free space/);}finally{fs.statfsSync=old;}
+ assert.equal(readCatalog(store.root).archives[0].sha256,before);assert.equal(store.snapshot().runs[0].title,'Original');
+});
+
+test('startup removes only owned interrupted capture directories', async () => {
+ const store=library();const pinned=await capture(store);const directory=path.dirname(pinned.stage);const unknown=path.join(directory,'unknown');fs.mkdirSync(unknown);const target=root();fs.symlinkSync(target,path.join(directory,'capture-ABCDEF'));require('../electron/backend/backup-manager.cjs').cleanInterruptedCaptures(store.root);assert.equal(fs.existsSync(pinned.stage),false);assert.equal(fs.existsSync(unknown),true);assert.equal(fs.lstatSync(path.join(directory,'capture-ABCDEF')).isSymbolicLink(),true);assert.equal(store.snapshot().runs.length,1);
+});
+
+test('a failed journal write cannot replace the working library', async () => {
+ const store=library();const saved=await createBackupService(store).create(request());const run=store.snapshot().runs[0];value(store.dispatch('records.updateRun',{id:run.id,expectedRevision:run.revision,changes:{title:'Keep current'}}));const original=fs.promises.open;let injected=false;
+ fs.promises.open=async(file,...args)=>{if(String(file).includes('restore-journal.json.partial-')){injected=true;throw Object.assign(new Error('injected journal write failure'),{code:'EIO'});}return original(file,...args);};
+ try{await assert.rejects(createBackupService(store).restore({...request(),source:path.join(store.root,'backups',saved.name)}));}finally{fs.promises.open=original;}
+ assert.equal(injected,true);assert.equal(store.snapshot().runs[0].title,'Keep current');store.close();const reopened=new LibraryStore(store.root);stores.add(reopened);assert.equal(reopened.snapshot().runs[0].title,'Keep current');
+});
+
+test('recovery rehearsal pins the authenticated bytes even if the source is replaced', async () => {
+ const store=library();await runManagedBackup(store,request(null));const archive=readCatalog(store.root).archives[0];const source=path.join(root(),'download.labmatebackup');fs.copyFileSync(path.join(store.root,'backups',archive.name),source);let replaced=false;
+ const result=await verifyBackup(store.root,{password:request().password,jobId:'changing-download',source},{onProgress:event=>{if(!replaced&&event.phase==='switching'){replaced=true;fs.writeFileSync(source,'replaced cloud download');}}});
+ assert.equal(replaced,true);assert.equal(result.verified,true);assert.equal(readCatalog(store.root).rehearsal.sha256,archive.sha256);assert.equal(store.snapshot().runs[0].title,'Original');
+});

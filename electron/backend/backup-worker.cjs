@@ -27,7 +27,7 @@ async function deliverAndRotate(catalog) {
   if (destination) {
     try {
       const stat = await fsp.lstat(destination);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('The Box backup folder is unavailable.');
+      if (!stat.isDirectory() || stat.isSymbolicLink() || await fsp.realpath(destination) !== destination) throw new Error('The Box backup folder is unavailable.');
       for (const archive of [...catalog.archives].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))) {
         if (!keep.has(archive.name)) continue;
         const previousCopy = archive.copies.find(c => c.directory === destination);
@@ -86,7 +86,8 @@ async function backup() {
     const service = createBackupService(frozenStore, { objectsRoot: path.join(captured.stage, 'objects'), localRetention: Number.MAX_SAFE_INTEGER });
     const result = await service.create({ password: request.password, jobId: request.jobId }, job);
     const sha256 = await digest(path.join(root, 'backups', result.name));
-    catalog.archives.push({ name: result.name, capturedAt: captured.capturedAt, token: captured.token, sha256, copies: [] });
+    const localStat=await fsp.lstat(path.join(root,'backups',result.name));
+    catalog.archives.push({ localSize:localStat.size,localMtimeMs:localStat.mtimeMs,name: result.name, capturedAt: captured.capturedAt, token: captured.token, sha256, copies: [] });
     await writeCatalog(root, catalog);
     job.markCommitted();
   }
@@ -101,18 +102,23 @@ async function verify() {
   const temporary = await fsp.mkdtemp(path.join(folder, 'test-'));
   let store;
   try {
+    // Box can replace a downloaded file during verification. Rehearse and pin
+    // the same private, verified byte copy rather than rereading that path.
+    const source = path.join(temporary, 'source.labmatebackup');
+    await copyFileAtomic(request.source, source, { maxBackupBytes: 2 * 1024 ** 3 }, copyJob);
     store = new LibraryStore(temporary);
-    const snapshot = await createBackupService(store).restore(request, job);
+    const snapshot = await createBackupService(store).restore({ ...request, source }, job);
     // Restore validation checks authentication, every referenced hash, SQLite
     // integrity/foreign keys, schema, documents, and migration before readback.
     const records = { notebooks: snapshot.notebooks.length, experiments: snapshot.experiments.length, runs: snapshot.runs.length, attachments: snapshot.attachments.length, citations: snapshot.citations.length };
-    const sha256 = await digest(request.source);
+    const sha256 = await digest(source);
     const catalog = readCatalog(root);
     let archive = catalog.archives.find(a => a.sha256 === sha256);
+    if (archive && !await sameHash(path.join(root,'backups',archive.name),sha256)) archive = null;
     if (!archive) {
       const name = `rehearsed-${crypto.randomUUID()}.labmatebackup`;
       await fsp.mkdir(path.join(root, 'backups'), { recursive: true, mode: 0o700 });
-      await copyFileAtomic(request.source, path.join(root, 'backups', name), { maxBackupBytes: 2 * 1024 ** 3 }, copyJob);
+      await copyFileAtomic(source, path.join(root, 'backups', name), { maxBackupBytes: 2 * 1024 ** 3 }, copyJob);
       archive = { name, sha256, capturedAt: new Date().toISOString(), token: null, copies: [], rehearsalOnly: true };
       catalog.archives.push(archive);
     }

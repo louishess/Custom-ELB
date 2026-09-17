@@ -161,11 +161,17 @@ async function fsyncDirectory(directory) {
   try {
     const handle = await fsp.open(directory, 'r');
     try { await handle.sync(); } finally { await handle.close(); }
-  } catch {
+  } catch (error) {
     // Some filesystems reject opening directories for fsync. The surrounding
     // file writes remain atomic, and callers still retain the journal or
     // staged copy when a later operation fails.
+    if (!['EINVAL', 'ENOTSUP', 'EISDIR', 'EBADF'].includes(error.code)) throw error;
   }
+}
+
+async function syncFile(filePath) {
+  const handle = await fsp.open(filePath, 'r');
+  try { await handle.sync(); } finally { await handle.close(); }
 }
 
 async function readExact(handle, length, position) {
@@ -869,6 +875,10 @@ async function currentLibraryForRollback(store, root, rollbackPath, job, maxFile
       }
     }
     await ensureRegularFile(path.join(rollbackPath, 'library.sqlite'), 'rollback database');
+    for (const suffix of ['', '-wal', '-shm']) {
+      const retained = path.join(rollbackPath, 'library.sqlite' + suffix);
+      if (await lstatOrNull(retained)) await syncFile(retained);
+    }
   }
   const oldObjects = await lstatOrNull(objectsRoot);
   if (oldObjects) {
@@ -879,9 +889,16 @@ async function currentLibraryForRollback(store, root, rollbackPath, job, maxFile
     for (const name of await fsp.readdir(objectsRoot)) {
       const source = path.join(objectsRoot, name);
       const stat = await lstatOrNull(source);
-      if (stat?.isFile() && !stat.isSymbolicLink()) await fsp.copyFile(source, path.join(rollbackPath, 'objects', name));
+      if (stat?.isFile() && !stat.isSymbolicLink()) {
+        const retained = path.join(rollbackPath, 'objects', name);
+        await fsp.copyFile(source, retained);
+        await syncFile(retained);
+      }
     }
+    await fsyncDirectory(path.join(rollbackPath, 'objects'));
   }
+  await fsyncDirectory(rollbackPath);
+  await fsyncDirectory(path.dirname(rollbackPath));
   return { dbPath, objectsRoot };
 }
 
@@ -988,7 +1005,7 @@ function recoverRestoreJournal(rootValue) {
   const complete = journal.phase === 'opened' || journal.phase === 'committed';
   try {
     if (complete) {
-      if (!fs.existsSync(dbPath)) throw backupError('IO', 'The completed restore is missing its live database.');
+      if (!fs.existsSync(dbPath) || !fs.existsSync(objectsPath)) throw backupError('IO', 'The completed restore is missing live files. Recovery material has been preserved.');
       try {
       fs.rmSync(oldDb, { force: true });
       for (const pair of sidecars) fs.rmSync(pair.old, { force: true });

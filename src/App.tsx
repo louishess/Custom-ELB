@@ -182,14 +182,15 @@ export default function App() {
     setProgress(null); setError(next.recoveryWarnings?.join(' ') ?? '');
   }
 
-  async function refreshCurrentRun(): Promise<Entry | null> {
+  async function refreshCurrentRun(apply = true): Promise<Entry | null> {
     if (mode === 'demo' || !entryId) return null;
     const result = await desktopAPI?.records.snapshot(undefined);
     if (!result) { setError('The local library bridge is unavailable.'); return null; }
     if (!result.ok) { setError(result.error.message); return null; }
     const fresh = result.value.runs.find(run => run.id === entryId && isActiveRun(result.value, run));
     if (!fresh) { applySnapshot(result.value); setError('This run is no longer available in the active library.'); return null; }
-    applySnapshot(result.value);
+    if (apply) applySnapshot(result.value);
+    else { currentRunRef.current = fresh; expectedRevisionRef.current = fresh.revision; }
     return { ...fresh, attachments: result.value.attachments.filter(attachment => attachment.runId === fresh.id) };
   }
 
@@ -312,7 +313,7 @@ export default function App() {
     // Refresh only metadata/revision, then deliberately retry the retained
     // local draft against that revision. The fresh server documents are not
     // allowed to replace the editor while it is dirty.
-    if (!(await refreshCurrentRun())) return;
+    if (!(await refreshCurrentRun(false))) return;
     if (!(await flushDraft())) setError('The latest draft could not be saved.');
   }
 

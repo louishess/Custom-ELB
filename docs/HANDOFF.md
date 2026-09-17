@@ -1,14 +1,13 @@
 # LabMate functional application handoff
 
-Updated September 12, 2026. Version 0.5.1 adds citation-label and citation-style
-settings to the working Zotero integration. No style is preselected. Users may
-show paper titles or Zotero-formatted citations, choose a style, and retain
-formatted labels offline. Schema 5 preserves these preferences and cached
-labels in backups. The white export presentation work is now integrated.
-Read `ZOTERO.md` for setup, behavior and live acceptance boundaries.
-Preserve the frontend, seven-palette appearance continuum, and local-first
-architecture. Read `BACKEND-CONTRACT.md` before changing subsystem interfaces.
-See `VALIDATION.md` for the evidence and remaining live acceptance checks.
+Updated September 17, 2026. Version 0.6.0 is the daily-use release candidate:
+schema-6 Solid/Glass appearance, local-first encrypted checkpoints, persistent
+Box delivery, recovery rehearsal, generation-bound mutation updates, and the
+14 audit repairs. Read `DAILY-USE-RELEASE.md` for evidence and final live gates;
+read `RECOVERY.md` for operating instructions. Installation and real-account
+acceptance are distinct from automated qualification. Preserve the frontend,
+seven palettes, experiment-wide references, explicitly selected citation styles,
+and white exports. `BACKEND-CONTRACT.md` describes shared interfaces.
 
 Version 0.4.3 adds Midnight Purple as a separate Settings palette: soft purple at the light end, a pure black canvas and violet accents at the dark end. Existing palettes, brightness, notebook identities and status colors remain unchanged. Schema 3 expands the palette constraint through a transactional preferences-only migration from schemas 1 and 2.
 
@@ -65,7 +64,7 @@ Appearance offers Original Sage, Ocean, Lavender, Terracotta, Rose, Graphite and
 All seven preserve the 0–100 slider and semantic notebook/status colors. Schema 3
 adds Midnight Purple to the saved palette choices. Schema 1 libraries migrate to
 Original Sage; schema 2 libraries keep their saved palette and brightness.
-Authenticated backups from schemas 1–5 are supported; future schemas are rejected.
+Authenticated backups from schemas 1–6 are supported; future schemas are rejected.
 Schema 4 adds experiment citations without changing palette choices. All runs
 of an experiment share its references; a new independent experiment starts empty.
 
@@ -117,33 +116,21 @@ Word/Pages/TextEdit and Windows rendering remain manual acceptance items.
 
 ## Backups and recovery
 
-Settings provides password confirmation and native Box destination setup, first backup/Back up now, restore,
-and daily backup scheduling with launch catch-up. The destination picker
-suggests a detected Box Drive folder. Remembered passwords use Electron
-safeStorage; only encrypted credential bytes are stored locally, outside the
-backup. Setup is completed by the user on their Mac. Destination changes reuse the
-saved password; Finder reveal is limited to the configured directory. Settings
-shows availability, progress, last verified local copy, attempt and failure.
-Daily failures are persisted; a successful copy clears the latest failure.
+Settings provides password confirmation, a native Box folder picker, local and
+Box-copy status, Back up now, Test recovery, and Restore backup. Changed work is
+checkpointed every 15 minutes while running, with launch/resume catch-up and a
+final normal-quit checkpoint. Local protection continues without Box. Delivery
+and rotation use a persistent owned-archive catalog. Retain 16 recent, 30 daily,
+12 weekly copies, the latest successful rehearsal, required pending deliveries,
+and recovery material. Unknown files are never pruned. Upload remains Box's job.
 
-Backups use SQLite's consistent snapshot API, include Trash and referenced
-attachments, and are archived then encrypted with AES-256-GCM and scrypt.
-Each archive has a fresh salt/nonce and authenticated header. Completed files
-are validated before publishing, destination copies are verified, the newest
-seven local snapshots are retained, and destination archives are never pruned
-automatically. “Saved to Box Drive; upload managed by Box” is a local result,
-not proof of cloud upload.
-
-This release bounds each backup to 2 GiB of archive/expanded data, 1 GiB per
-included file, and 10,000 archive entries. Exceeding a limit fails the entire
-backup without publishing a partial copy. Larger files can remain attached;
-the limits and failure behavior are shown in Settings and `RECOVERY.md`.
-
-Restore authenticates into staging, validates archive paths/hashes/schema and
-SQLite integrity, preserves the current library for rollback, and uses a
-durable journal to recover an interrupted directory/database switch. Do not
-manually remove recovery staging while a restore is interrupted. Permanent
-deletion does not erase older backup or rollback copies. See `RECOVERY.md`.
+Backups include records, preferences, Trash, citations, and referenced objects.
+The 2 GiB total, 1 GiB individual-file, and 10,000-entry limits are enforced before
+imports can make a complete backup impossible. Capacity issues are visible.
+Secure password storage has no plaintext fallback. Older archives require their
+original password. Restore supports schemas 1–6 and has a non-cancellable switch;
+cleanup after commitment produces a warning, not rollback. Retry and recovery
+are available even when the current library cannot open. See `RECOVERY.md`.
 
 ## Architecture and ownership
 

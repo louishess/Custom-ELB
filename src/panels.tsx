@@ -435,7 +435,7 @@ function ExportPanel({ initialScope, onClose, notebook, entry, snapshot, selecte
   const [scope, setScope] = useState(initialScope);
   const [format, setFormat] = useState<'txt' | 'md' | 'html' | 'rtf' | 'docx'>('docx');
   const [order, setOrder] = useState<ExportOrder>('newest');
-  const [schemeId, setSchemeId] = useState('');
+  const [schemeId, setSchemeId] = useState(() => snapshot.schemes.find(scheme => scheme.notebookId === notebook?.id)?.id ?? '');
   const [selected, setSelected] = useState<string[]>(selectedRunIds.length ? selectedRunIds : entry ? [entry.id] : []);
   const [sectionOrder, setSectionOrder] = useState<SectionId[]>(sections.map(section => section.id));
   const [enabledSections, setEnabledSections] = useState<SectionId[]>(sections.map(section => section.id));

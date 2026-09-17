@@ -1,3 +1,16 @@
+# LabMate 0.6.0 daily-use candidate — September 17, 2026
+
+Current qualification and final live gates are recorded in
+[DAILY-USE-RELEASE.md](DAILY-USE-RELEASE.md). Machine-readable evidence is in
+`artifacts/release/`; the packaged `LabMate-release.json` identifies the exact
+commit and shipped-file hashes. Older release results below remain historical
+and must not substitute for matching-package acceptance.
+
+The existing schema-5 library was preserved and verified before upgrade in
+`artifacts/release/pre-upgrade-2026-09-17-e0dui6wt`: SQLite integrity/foreign keys,
+eight documents, four citations, and its referenced attachment hash passed.
+No working-library restore has been performed.
+
 # LabMate 0.5.1 citation label and style settings — September 12, 2026
 
 Settings → Integrations now offers Paper title / Formatted citation and a

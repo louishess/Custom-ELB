@@ -72,6 +72,12 @@ async function main() {
     assert.equal(fs.readFileSync(files.getPath(restored.attachments[0].id), 'utf8'), 'label,value\nα,42\n');
     store.close(); store.reopen();
     assert.deepEqual(store.snapshot().runs, expected.runs);
+    const manager = packedRequire('./electron/backend/backup-manager.cjs');
+    const managed = await manager.runManagedBackup(store,{password:'Disposable packaged password',destination,jobId:'packaged-managed'});
+    assert.equal(managed.pendingDeliveryCount,0);
+    const catalog=packedRequire('./electron/backend/backup-catalog.cjs').readCatalog(store.root);
+    const tested=await manager.verifyBackup(store.root,{password:'Disposable packaged password',source:path.join(destination,catalog.archives[0].name),jobId:'packaged-rehearsal'});
+    assert.equal(tested.verified,true); assert.equal(tested.records.runs,1);
   } finally { store.close(); }
 }
 

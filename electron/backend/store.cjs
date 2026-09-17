@@ -723,7 +723,17 @@ class LibraryStore {
     try {
       this._assertOpen();
       this._assertMutationAllowed();
-      const extra = this.db.transaction(() => { if (this.mutationUpdates) this.db.exec('DELETE FROM mutation_changes'); const result = operation(); this.db.prepare('UPDATE library_state SET change_token=? WHERE id=1').run(crypto.randomUUID()); return result; })();
+      const extra = this.db.transaction(() => {
+        if (this.mutationUpdates) this.db.exec('DELETE FROM mutation_changes');
+        const beforePages = this.db.pragma('page_count', {simple:true});
+        const result = operation();
+        if (this.db.pragma('page_count', {simple:true}) > beforePages) {
+          const limit = require('./backup-capacity.cjs').capacity(this);
+          if (limit.databaseBytes > 1024 ** 3 || limit.estimatedBytes > 2 * 1024 ** 3) throw new StoreError('VALIDATION', 'This change would exceed complete-backup capacity. Remove unneeded attachments or start another library.');
+        }
+        this.db.prepare('UPDATE library_state SET change_token=? WHERE id=1').run(crypto.randomUUID());
+        return result;
+      })();
       if (extra && Array.isArray(extra.gcHashes)) this._garbageCollect(extra.gcHashes);
       return this._snapshotUnsafe(this.mutationUpdates);
     } catch (error) {

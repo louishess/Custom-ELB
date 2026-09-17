@@ -255,3 +255,18 @@ test('multi-entry Markdown export gives same-named previews globally unique comp
   const markdown = (await fsp.readFile(destination)).toString('utf8');
   for (const name of assetNames) assert.ok(markdown.includes(`${directory}/${name}`));
 });
+
+test('A08: every export scope excludes runs with trashed experiments', async t => {
+  const {store,fileService,notebook,run,root}=await makeRealLibrary(t); const experiment=store.snapshot().experiments[0];
+  assert.equal(store.dispatch('trash.move',{kind:'experiment',id:experiment.id,expectedRevision:experiment.revision}).ok,true);
+  const service=createExportService(store,fileService);
+  for(const scope of ['entry','selected','notebook']) await assert.rejects(service.resolve(request(notebook.id,scope==='notebook'?[]:[run.id],'txt',path.join(root,'hidden.txt'),{scope})),error=>['VALIDATION','NOT_FOUND'].includes(error.code));
+});
+
+test('A04: failure while restoring an overwritten export preserves the original in its recovery directory', async t => {
+  const {store,fileService,notebook,run,root}=await makeRealLibrary(t); const directory=path.join(root,'failed-rollback');await fsp.mkdir(directory);const destination=path.join(directory,'prior.md');await fsp.writeFile(destination,'IRREPLACEABLE ORIGINAL');
+  const original=fsp.rename;
+  fsp.rename=async(source,target)=>{if(target===destination)throw Object.assign(new Error('injected publication and rollback failure'),{code:'EIO'});return original(source,target);};
+  try { await assert.rejects(createExportService(store,fileService).write(request(notebook.id,[run.id],'md',destination)),error=>error.code==='IO'); } finally {fsp.rename=original;}
+  const backup=(await fsp.readdir(directory)).find(name=>name.startsWith('.labmate-export-backup-'));assert.ok(backup);const files=await fsp.readdir(path.join(directory,backup));assert.equal(await fsp.readFile(path.join(directory,backup,files[0]),'utf8'),'IRREPLACEABLE ORIGINAL');
+});

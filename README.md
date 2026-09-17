@@ -2,7 +2,7 @@
 
 A standalone Apple Silicon Mac electronic lab notebook, built with Electron, React, TypeScript, and SQLite. The working library stays on your Mac; encrypted portable snapshots can be saved to Box Drive.
 
-Read [the handoff](docs/HANDOFF.md) for verified release status, [recovery instructions](docs/RECOVERY.md) before using backups, and [the dependency inventory](docs/DEPENDENCIES.md) for resolved versions and licenses.
+Read [the 0.6.0 release record](docs/DAILY-USE-RELEASE.md) for qualification and remaining live gates, [the handoff](docs/HANDOFF.md) for current capabilities, [recovery instructions](docs/RECOVERY.md) before using backups, and [the dependency inventory](docs/DEPENDENCIES.md) for resolved versions and licenses.
 
 ## Local workflows
 
@@ -27,6 +27,8 @@ Zotero, Google Docs, scientific previews, live cloud synchronization, shared acc
 The working library lives in `~/Library/Application Support/LabMate/`. Imported files are copied into managed storage; originals remain intact. Keep the live database outside cloud-synchronized folders.
 
 Choose a Box Drive backup folder and confirm a password in Settings, then create the first backup. Destination changes reuse the saved password; availability, failures, and verified local copy times are visible. LabMate creates authenticated, password-encrypted `.labmatebackup` archives and remembers the password using macOS-protected secure storage. Backups include Trash and referenced attachments. The working library itself is not password-encrypted.
+
+Changed work receives a local checkpoint every 15 minutes while running, with launch/resume catch-up and a final checkpoint on normal quit. Box outages leave delivery queued across restarts. Rotation keeps 16 recent, 30 daily, 12 weekly, and the latest successfully rehearsed archive, counting overlap once. Pending delivery and recovery material are preserved. **Test recovery** authenticates and restores a private copy without changing the working library. Optional **Solid / Glass** appearance preserves the seven palettes and uses solid surfaces for accessibility preferences.
 
 A local write to Box Drive does not prove upload completion. Box manages synchronization; use Box to confirm cloud availability when needed. Passwords and local destination configuration are excluded from backups. Restore replaces the current library after confirmation, with a rollback copy retained. See [Recovery](docs/RECOVERY.md).
 

@@ -4,7 +4,19 @@ const fsp = fs.promises;
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
 const { assertCapacity } = require('./backup-capacity.cjs');
-const { readCatalog } = require('./backup-catalog.cjs');
+const { readCatalog, localArchiveAvailable } = require('./backup-catalog.cjs');
+
+function cleanInterruptedCaptures(root) {
+  const directory = path.join(root, 'backup-jobs');
+  let stat;
+  try { stat = fs.lstatSync(directory); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+  for (const name of fs.readdirSync(directory)) {
+    if (!/^capture-[A-Za-z0-9]{6}$/.test(name)) continue;
+    const target = path.join(directory, name), child = fs.lstatSync(target);
+    if (child.isDirectory() && !child.isSymbolicLink()) fs.rmSync(target, { recursive: true, force: true });
+  }
+}
 
 async function capture(store) {
   assertCapacity(store);
@@ -53,12 +65,13 @@ function runThread(data, context) {
 }
 
 async function runManagedBackup(store, request, context = {}) {
+  if (request.destination) request = {...request,destination:await fsp.realpath(request.destination).catch(()=>request.destination)};
   const catalog = readCatalog(store.root);
   const token = store.db.prepare('SELECT change_token FROM library_state WHERE id=1').get().change_token;
   const previous = [...catalog.archives].filter(a => !a.rehearsalOnly).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))[0];
   let captured;
   try {
-    if (request.force || !previous || previous.token !== token || !fs.existsSync(path.join(store.root, 'backups', previous.name))) captured = await capture(store);
+    if (request.force || !previous || previous.token !== token || !localArchiveAvailable(store.root, previous)) captured = await capture(store);
     if (context.signal?.aborted) throw Object.assign(new Error('Backup cancelled.'), { code: 'CANCELLED' });
     const operation = runThread({ operation: 'backup', root: store.root, captured, request }, context);
     context.releaseQueue?.();
@@ -69,4 +82,4 @@ async function runManagedBackup(store, request, context = {}) {
 function verifyBackup(root, request, context = {}) {
   return runThread({ operation: 'verify', root, request }, context);
 }
-module.exports = { capture, runManagedBackup, verifyBackup, runThread };
+module.exports = { capture, runManagedBackup, verifyBackup, runThread, cleanInterruptedCaptures };

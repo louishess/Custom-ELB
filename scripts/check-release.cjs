@@ -28,16 +28,18 @@ const labels={information:'Experimental information',method:'Method',notes:'Note
  });
  await check('A13: Recent entries opens the run actually selected',async()=>{ await page.locator('.recent-row').filter({hasText:'Release Run A'}).click(); assert.equal(await page.locator('.entry-document-header h1').innerText(),'Release Run A'); });
  await check('A05/A06: Every export format, scope, and offered ordering works through the UI',async()=>{
+  await api('schemes.create',{notebookId:nb.id,name:'Reverse fixture',description:'',runIds:[runs[1].id,runs[0].id]}); await page.reload(); await page.locator('.notebook-card').first().click();
   await application.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});});
   await page.getByRole('button',{name:'Export notebook',exact:true}).click();
   let index=0;
   const cases=[]; for(const scope of ['entry','selected','notebook']) for(const format of ['txt','md','html','rtf','docx']) cases.push({scope,format,order:'newest'});
-  for(const order of ['oldest','title-az','title-za','label-az','author-az','number-asc','number-desc']) cases.push({scope:'notebook',format:'txt',order});
+  for(const order of ['oldest','title-az','title-za','label-az','author-az','number-asc','number-desc','scheme']) cases.push({scope:'notebook',format:'txt',order});
   for(const item of cases) {
    const destination=path.join(root,`export-${++index}.${item.format}`);
    await application.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file});},destination);
    await page.getByLabel('Export scope',{exact:true}).selectOption(item.scope); await page.getByLabel('Format',{exact:true}).selectOption(item.format); if(item.scope!=='entry') await page.getByLabel('Entry ordering',{exact:true}).selectOption(item.order);
-   await page.getByRole('button',{name:'Export',exact:true}).click(); await page.getByText(`Saved ${path.basename(destination)}.`,{exact:true}).waitFor(); assert.ok(fs.statSync(destination).size>0);
+   await page.getByRole('button',{name:/^Export( again)?$/,exact:true}).click(); await page.getByText(`Saved ${path.basename(destination)}.`,{exact:true}).waitFor(); assert.ok(fs.statSync(destination).size>0);
+   if(item.scope==='notebook' && item.format==='txt') { const body=fs.readFileSync(destination,'utf8'); const a=body.indexOf('Release Run A'),b=body.indexOf('Release Run B'); assert.ok(a>=0&&b>=0); assert.equal(a<b,['oldest','title-az','label-az','author-az','number-asc'].includes(item.order)); }
   }
   await page.getByRole('button',{name:'Close panel',exact:true}).click();
  });
@@ -47,15 +49,28 @@ const labels={information:'Experimental information',method:'Method',notes:'Note
  });
  await check('Glass preserves seven palettes, brightness endpoints, solid editors, and reduced-motion styling',async()=>{
   await page.getByRole('button',{name:'Settings',exact:true}).click();
-  await page.getByRole('radio',{name:'Glass',exact:true}).check(); await page.waitForFunction(()=>document.documentElement.dataset.material==='glass');
+  await page.getByRole('radio',{name:'Glass',exact:true}).click(); await page.waitForFunction(()=>document.documentElement.dataset.material==='glass');
   for(const palette of ['sage','ocean','lavender','terracotta','rose','graphite','midnight']) {
-   await api('preferences.update',{palette,material:'glass',appearance:50}); await page.reload(); await page.getByRole('heading',{name:'Lab notebooks',exact:true}).waitFor(); await page.waitForFunction(p=>document.documentElement.dataset.palette===p,palette);
+   for(const appearance of [0,50,100]) {
+   await api('preferences.update',{palette,material:'glass',appearance}); await page.reload(); await page.getByRole('heading',{name:'Lab notebooks',exact:true}).waitFor(); await page.waitForFunction(p=>document.documentElement.dataset.palette===p,palette);
    assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('.sidebar')).backdropFilter.includes('blur')),true);
+   await page.locator('.notebook-card').first().click();
+   const editor=page.locator('[contenteditable="true"]').first(); await editor.waitFor(); assert.notEqual(await editor.evaluate(e=>getComputedStyle(e.closest('.entry-document')).backgroundColor),'rgba(0, 0, 0, 0)');
+   fs.mkdirSync('artifacts/release/glass',{recursive:true}); await page.screenshot({path:`artifacts/release/glass/${palette}-${appearance}.png`});
+   }
   }
   await page.emulateMedia({reducedMotion:'reduce'}); assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('.sidebar')).animationName),'none');
   await api('preferences.update',{palette:'sage',appearance:0,material:'solid'}); await page.reload();
  });
  await page.locator('.notebook-card').first().click();
+ await check('A11: Retry restarts a failed worker and saves the retained editor draft',async()=>{
+  await application.evaluate(async({app})=>{const load=process.getBuiltinModule('module').createRequire(app.getAppPath()+'/package.json');const client=load('./electron/main.cjs').runtime.worker;await new Promise(resolve=>{client.worker.once('exit',resolve);client.worker.kill();});});
+  const editor=page.locator('[contenteditable="true"]').first();await editor.fill('RETAINED DRAFT AFTER WORKER FAILURE');
+  await page.getByRole('button',{name:'Retry with this draft',exact:true}).click();
+  await page.getByRole('button',{name:'Back to all notebooks',exact:true}).click();
+  const saved=await api('records.snapshot');assert.ok(saved.runs.some(run=>JSON.stringify(run.documents.information).includes('RETAINED DRAFT AFTER WORKER FAILURE')));
+  await page.locator('.notebook-card').first().click();
+ });
  const source=path.join(root,'caption.txt');fs.writeFileSync(source,'Synthetic attachment');
  await application.evaluate(({dialog},source)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[source]});},source);
  await page.getByRole('button',{name:'Add files',exact:true}).click(); await page.getByRole('button',{name:'Open attachment caption.txt',exact:true}).click(); await page.getByText('Preview unavailable',{exact:true}).waitFor();

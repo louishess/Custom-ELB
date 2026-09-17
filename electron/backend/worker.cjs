@@ -421,6 +421,7 @@ function loadServices(root, options = {}) {
     const { createFileService } = requireFn('./files.cjs');
     const { createExportService } = requireFn('./exports.cjs');
     const store = new LibraryStore(root, { deferOpen: !!options.recovery, mutationUpdates: true });
+    requireFn('./backup-manager.cjs').cleanInterruptedCaptures(root);
     const fileService = createFileService(store);
     return {
       store,
@@ -544,10 +545,10 @@ function createWorkerRuntime(options = {}) {
     try {
       if (controller && controller.signal.aborted) throw cancelledError();
       if (message.method === 'backups.inspect') {
-        const {readCatalog} = require('./backup-catalog.cjs');
+        const {readCatalog,localArchiveAvailable} = require('./backup-catalog.cjs');
         const catalog = readCatalog(root);
         let capacity, currentToken; try { currentToken = ensureServices().store.db.prepare('SELECT change_token FROM library_state WHERE id=1').get().change_token; capacity = require('./backup-capacity.cjs').capacity(ensureServices().store); } catch {}
-        return {ok:true, value:{catalog, capacity, currentToken}};
+        return {ok:true, value:{catalog, capacity, currentToken,localAvailable:localArchiveAvailable(root,[...catalog.archives].filter(a=>!a.rehearsalOnly).sort((a,b)=>b.capturedAt.localeCompare(a.capturedAt))[0])}};
       }
       if (message.method === 'backups.verify') return {ok:true, value:await require('./backup-manager.cjs').verifyBackup(root, payload, context)};
       if (message.method === 'records.snapshot') {

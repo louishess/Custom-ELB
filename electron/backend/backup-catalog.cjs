@@ -52,6 +52,10 @@ function retainedArchives(catalog, destination) {
   for (const archive of sorted) if (archive.sha256 === catalog.rehearsal?.sha256) keep.add(archive.name);
   return keep;
 }
+function localArchiveAvailable(root, archive) {
+  if (!archive) return false;
+  try { const stat=fs.lstatSync(path.join(root,'backups',archive.name)); return stat.isFile() && !stat.isSymbolicLink() && (archive.localSize === undefined || (stat.size === archive.localSize && stat.mtimeMs === archive.localMtimeMs)); } catch { return false; }
+}
 function catalogStatus(catalog, destination) {
   const live = catalog.archives.filter(a => !a.rehearsalOnly).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
   const copied = live.filter(a => a.copies.some(c => c.directory === destination));
@@ -68,4 +72,4 @@ function catalogStatus(catalog, destination) {
     cloudStatus: 'not-verified',
   };
 }
-module.exports = { digest, readCatalog, writeCatalog, retainedArchives, catalogStatus };
+module.exports = { localArchiveAvailable, digest, readCatalog, writeCatalog, retainedArchives, catalogStatus };

@@ -1194,7 +1194,7 @@ function createBridgeRuntime({
       inspectionInFlight = runtime.worker.request('backups.inspect', undefined).then(value => { protectionInspection = value; }).finally(() => { inspectionInFlight = null; });
     }
     const inspected = protectionInspection;
-    const protectedRevision = !!inspected?.ok && !!health.capturedRevision && health.capturedRevision === inspected.value?.currentToken;
+    const protectedRevision = !!inspected?.ok && inspected.value?.localAvailable && !!health.capturedRevision && health.capturedRevision === inspected.value?.currentToken;
     return { ok: true, value: { ...makeBackupStatus(configStore.readStatus(), backupRunning, backupMessage || undefined),
       ...health, lastFailure: health.lastFailure || makeBackupStatus(configStore.readStatus(), backupRunning).lastFailure, protectedRevision,
       overdue: !protectedRevision && (!health.lastLocalBackupAt || Date.now() - Date.parse(health.lastLocalBackupAt) > BACKUP_DEADLINE_MS),
@@ -1334,7 +1334,7 @@ function createBridgeRuntime({
       const config = configStore.readRaw();
       if (shuttingDown || !config.ok || !config.value || backupInFlight) return;
       const health = backupHealth();
-      if (!health.pendingDeliveryCount && protectionInspection?.ok && protectionInspection.value?.currentToken === health.capturedRevision) return;
+      if (!health.pendingDeliveryCount && protectionInspection?.ok && protectionInspection.value?.localAvailable && protectionInspection.value?.currentToken === health.capturedRevision) return;
       if (!health.pendingDeliveryCount && health.lastLocalBackupAt && Date.now() - Date.parse(health.lastLocalBackupAt) < BACKUP_DEADLINE_MS) return;
       await runBackup(randomJobId(), null, true);
     };
