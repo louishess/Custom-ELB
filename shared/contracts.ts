@@ -32,7 +32,7 @@ export interface Preview { kind: 'image' | 'pdf' | 'spreadsheet' | 'unsupported'
 export type ExportOrder = import('./ordering.cjs').ExportOrder;
 export interface ExportRequest { scope: 'entry' | 'selected' | 'notebook'; notebookId: string; runIds: string[]; format: 'txt' | 'md' | 'html' | 'rtf' | 'docx'; order: ExportOrder; schemeId?: string; sections: SectionId[]; data: 'none' | 'captions' | 'previews'; jobId: string }
 type Op<I, O = LibrarySnapshot> = { input: I; output: O };
-export interface AppearanceStatus { material: 'solid'|'glass'; reducedTransparency: boolean; highContrast: boolean }
+export interface AppearanceStatus { material: 'solid'|'glass'; reducedTransparency: boolean; highContrast: boolean; reducedMotion: boolean }
 export interface Operations {
  'appearance.status': Op<undefined, AppearanceStatus>;
  'zotero.status': Op<undefined, ZoteroStatus>;

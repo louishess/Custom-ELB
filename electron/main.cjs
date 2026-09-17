@@ -30,6 +30,7 @@ const {
   clipboard,
   safeStorage,
   nativeTheme,
+  systemPreferences,
   powerMonitor,
   utilityProcess,
 } = electron;
@@ -1243,7 +1244,7 @@ function createBridgeRuntime({
       if (method.startsWith('dictation.')) return await invokeDictation(event, method, payload);
       if (citationData.schemas[method]) return await invokeCitations(event, method, payload);
       switch (method) {
-        case 'appearance.status': return {ok:true, value:require('./appearance.cjs').applyMaterial(window, nativeTheme)};
+        case 'appearance.status': return {ok:true, value:require('./appearance.cjs').applyMaterial(window, nativeTheme, undefined, systemPreferences)};
         case 'yield.copy': {
           const documents = Object.fromEntries(['starting', 'product'].map(role => [role, {type:'doc', content:[{type:'paragraph', content:[{type:'text', text:payload[role].text, marks:[{type:'yieldMaterial', attrs:{role,id:role,...(payload[role].manual ? {manual:payload[role].manual} : {})}}]}]}]}]));
           const result = calculateMarkedYield(documents);
@@ -1257,7 +1258,7 @@ function createBridgeRuntime({
         case 'backups.changeDestination': return configureBackups(undefined, window, true);
         case 'backups.revealDestination': return revealBackupDestination();
         case 'backups.run': return runBackup(payload.jobId, window);
-        case 'backups.restore': { const result = await runRestore(payload, window); if (result.ok) require('./appearance.cjs').applyMaterial(window, nativeTheme, result.value.preferences?.material); return result; }
+        case 'backups.restore': { const result = await runRestore(payload, window); if (result.ok) require('./appearance.cjs').applyMaterial(window, nativeTheme, result.value.preferences?.material, systemPreferences); return result; }
         case 'backups.verify': return runRestore(payload, window, true);
         case 'attachments.import': return importAttachments(payload, window, libraryGeneration);
         case 'attachments.preview': return previewAttachment(payload, window);
@@ -1282,7 +1283,7 @@ function createBridgeRuntime({
           return runtime.worker.request('jobs.cancel', payload);
         default: {
           const result = await runtime.worker.request(method, payload, libraryGeneration);
-          if (result.ok && result.value?.preferences) require('./appearance.cjs').applyMaterial(window, nativeTheme, result.value.preferences.material);
+          if (result.ok && result.value?.preferences) require('./appearance.cjs').applyMaterial(window, nativeTheme, result.value.preferences.material, systemPreferences);
           return result;
         }
       }
@@ -1446,7 +1447,7 @@ function createWindow(runtime) {
       partition: 'elb-preview',
     },
   });
-  require('./appearance.cjs').installMaterial(window, nativeTheme);
+  require('./appearance.cjs').installMaterial(window, nativeTheme, systemPreferences);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());

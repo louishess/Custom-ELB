@@ -86,7 +86,7 @@ function exposeBridge() {
 
   ipcRenderer.on('labmate:appearance', (_event, value) => {
     if (!value || !['solid','glass'].includes(value.material)) return;
-    const status = {material: value.material, reducedTransparency: !!value.reducedTransparency, highContrast: !!value.highContrast};
+    const status = Object.freeze({material: value.material, reducedTransparency: !!value.reducedTransparency, highContrast: !!value.highContrast, reducedMotion: !!value.reducedMotion});
     for (const listener of appearanceListeners) { try { listener(status); } catch {} }
   });
 

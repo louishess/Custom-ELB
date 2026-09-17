@@ -188,6 +188,15 @@ export function appearancePalette(value: number, paletteId: AppearancePaletteId 
   return palette;
 }
 
+export function applyNativeAppearance(value: { material: 'solid' | 'glass'; reducedMotion: boolean }): void {
+  document.documentElement.dataset.material = value.material;
+  document.documentElement.dataset.reducedMotion = String(value.reducedMotion);
+}
+
+export function shouldReduceMotion(): boolean {
+  return document.documentElement.dataset.reducedMotion === 'true' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export function applyAppearance(value: number, paletteId: AppearancePaletteId = 'sage'): void {
   const position = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
   const root = document.documentElement;

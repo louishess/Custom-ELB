@@ -586,6 +586,11 @@ mark { color: var(--ink-secondary); background: var(--surface-soft); padding: 2p
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+:root[data-reduced-motion='true'], :root[data-reduced-motion='true'] *,
+:root[data-reduced-motion='true'] *::before, :root[data-reduced-motion='true'] *::after {
+  animation: none !important; transition: none !important; scroll-behavior: auto !important;
+}
+:root[data-reduced-motion='true'] .notebook-card:hover { transform: none; }
 .backup-summary { display: block; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 9px; padding: 10px; margin-bottom: 12px; background: var(--surface); }
 .backup-summary strong, .backup-summary small { display: block; line-height: 1.5; }
 .backup-summary small { font-size: 10px; color: var(--ink-secondary); margin-top: 3px; }
